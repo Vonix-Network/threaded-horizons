@@ -19,4 +19,6 @@ This successor keeps threaded world generation and FEATURES enabled, permanently
 
 Do not treat this as C2ME, a Fabric port, or a verified world/pack release.
 
+Full release history since alpha.1 is in [`CHANGELOG.md`](CHANGELOG.md).
+
 See `LICENSE` and `NOTICE.md`.
