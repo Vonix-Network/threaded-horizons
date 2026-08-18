@@ -4,8 +4,34 @@ All notable Threaded Horizons releases for Minecraft **1.18.2** / Forge **40.3.1
 
 This project is a private Vonix **unverified** prerelease series. Code-candidate acceptance is not pack proof, not a live `/tp` proof, and not a production install.
 
+## [0.1.0-alpha.4] - 2026-08-18
+
+Pin `th-1182-forge-code-review-candidate-pin-027` is frozen after this rebuild. Sol-026 (`openai/gpt-5.6-sol`, read-only) independently confirmed the live alpha.3 YUNG crash as **Case A** and rejected fail-soft as a patch. This successor applies that P0. **Private unverified prerelease only. Not pack-tested. Not a live install. Not production-ready.**
+
+### Diagnosis (Sol-026)
+
+- YUNG Beardifier during NOISE asks `StructureFeatureManager` for referenced `STRUCTURE_STARTS` with `create=true`.
+- Vanilla NOISE cache is ±8. Reduced lock radius is write/lock ownership only (NOISE reduced radius 2).
+- Alpha.3 `MixinChunkRegion.hasChunk` returned false for in-cache starts at Chebyshev 3–8. That lie produced `We are asking a region for a chunk out of bound | -6188 18741`.
+- Filtering YUNG starts, returning air/empty starts, skipping Beardifier, or turning `reduceLockRadius` off are rejected workarounds.
+
+### P0 applied
+
+- `MixinChunkRegion`: restore vanilla `hasChunk`/`getChunk`. Reduced corners stay for diagnostics only.
+- IoB/VL helpers fail closed on a missing chunk. No uncached-noise biome, no `false` sky/water substitute.
+- Null structure processor list throws. Null `ConfiguredFeature` throws. Graal retry is only the known stream-closed message.
+- Tests: `MixinChunkRegionReadContractTest`, `WorldGenRegionReadVisibilityTest`, `FailClosedSubstituteContractTest`.
+
+### Still not workaround-free (Sol-026 leftovers)
+
+- Stronghold / nether piece-weight state is not generation-local.
+- `MixinWeightedList` / `MixinOrder` RNG semantics are unproven.
+- Quark `BackpackMenu` target miss is a pack-mod mixin warning, not a Threaded Horizons mixin. Live `a0b7f085` currently has alpha.3 disabled (`.abk`).
+- Live pack boot, `/tp`, FEATURES, retained-world, and timing are unproven.
+
 | Version | Published | Tag | Artifact | Bytes | SHA-256 |
 | --- | --- | --- | --- | --- | --- |
+| 0.1.0-alpha.4 | 2026-08-18 | `0.1.0-alpha.4-unverified` | `threaded-horizons-mc1.18.2-0.1.0-alpha.4.jar` | 1034856 | `fcff5459fafaa18c4dc8ce8f11c7ec0cf1e75287ea289242555a4fce6162210e` |
 | 0.1.0-alpha.3 | 2026-08-18 | `0.1.0-alpha.3-unverified` | `threaded-horizons-mc1.18.2-0.1.0-alpha.3.jar` | 1034505 | `96c7d6c4d15eec6d57e4387a0693f73c4c63e1286bb4b94680f42036714844c1` |
 | 0.1.0-alpha.2 | 2026-08-18 | `0.1.0-alpha.2-unverified` | `threaded-horizons-mc1.18.2-0.1.0-alpha.2.jar` | 1027757 | `7e40cc7a811431da75a401f7665949bcf77abbede6432c783a13b5d94788245e` |
 | 0.1.0-alpha.1 | 2026-08-18 | `0.1.0-alpha.1-unverified` | `threaded-horizons-mc1.18.2-0.1.0-alpha.1.jar` | 1029466 | `c60f78fb499ef750f799742143dddbe06a35a2572628ac5f03a9d7a76f4e4a9a` |
