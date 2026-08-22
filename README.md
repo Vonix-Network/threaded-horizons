@@ -1,47 +1,77 @@
 # Threaded Horizons
 
-Threaded Horizons is an independent MIT-licensed concurrent chunk-management mod for **Minecraft 1.18.2** on **Forge**. It uses the runtime identity `threadedhorizons` and is not an official RelativityMC, Yatopia, C2ME, or Fabric release.
+[![Latest release](https://img.shields.io/github/v/release/Vonix-Network/threaded-horizons?display_name=tag&sort=semver)](https://github.com/Vonix-Network/threaded-horizons/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Public release:** [`1.0.0`](https://github.com/Vonix-Network/threaded-horizons/releases/tag/1.0.0)
+Threaded Horizons is an experimental Forge mod for **Minecraft 1.18.2**. It explores concurrent chunk generation, chunk I/O, lighting, scheduling, and related thread-safety improvements.
 
-> **Release boundary:** This release is intended for controlled testing and evaluation. It is not a claim of production readiness, universal modpack compatibility, 1:1 C2ME parity, zero data loss, or a performance improvement. Back up worlds before use.
+> **Status:** `1.0.0` is available for controlled testing. Back up your world before use. Production readiness and universal compatibility have not been established.
 
-## Supported target
+[Download the latest release](https://github.com/Vonix-Network/threaded-horizons/releases/latest) · [Report an issue](https://github.com/Vonix-Network/threaded-horizons/issues) · [Security policy](SECURITY.md)
 
-| Item | Value |
+## Highlights
+
+- Concurrent chunk-generation scheduling and world-generation locking.
+- Asynchronous chunk storage and region-file I/O.
+- Threaded lighting and server scheduling work.
+- No-tick view-distance support when enabled in configuration.
+- Client-side view-distance options when the relevant client integrations are present.
+- Runtime status and diagnostic commands for testing.
+- Optional compatibility hooks that disable themselves when their required integration data is unavailable.
+
+Threaded Horizons is an independent project with its own mod ID, `threadedhorizons`. It is not C2ME, does not replace C2ME, and does not bundle a C2ME artifact.
+
+## Supported environment
+
+| Component | Version |
 | --- | --- |
 | Minecraft | 1.18.2 |
-| Loader | Forge |
-| Declared Forge range | `[40.3.11,41)` |
+| Mod loader | Forge 40.3.11 through the declared Forge 40.x range (`[40.3.11,41)`) |
 | Java | 17 |
 | Mod ID | `threadedhorizons` |
-| Release artifact | `threaded-horizons-mc1.18.2-1.0.0.jar` |
-| Artifact SHA-256 | `83358ec583361edcd64ace0df72e4c03e55c8c483f5cd19299b5b514e4411f9f` |
 
-## Verification scope
+The mod is packaged for both client and server sides. Client-only features are kept in the client mixin configuration and are not loaded by the dedicated-server run configuration.
 
-The `1.0.0` release passed a Java 17 clean Gradle test/build gate, archive and metadata inspection, and an exact packaged-JAR disposable dedicated-server boot on Forge 40.3.12. The server reached `Done`, applied the Threaded Horizons mixins, and stopped cleanly. Local tests cover storage state transitions, region-file save/reopen behavior, process-kill reopen of flushed region files, lock and scheduler contracts, Forge mixin target presence, and mapped-class overwrite differentials.
-
-A matched disposable chunk-generation comparison was also run twice with Threaded Horizons enabled and disabled. The measured debug TPS means were **8.95 with Threaded Horizons** and **12.62 without it** for that workload. This is an observed workload-specific regression, not a universal performance claim. See [`docs/limitations.md`](docs/limitations.md) and [`docs/feature-ledger.md`](docs/feature-ledger.md).
-
-The following remain outside the accepted evidence boundary: client launch, multiplayer/login, retained-world reopen, broad modpack compatibility, zero-data-loss behavior, and production readiness.
+See [`docs/compatibility.md`](docs/compatibility.md) for optional integrations and known exclusions.
 
 ## Installation
 
-1. Install Java 17, Minecraft 1.18.2, and Forge 40.3.11 or another Forge 40.x version inside the declared range.
-2. Download the JAR from the [`1.0.0` release](https://github.com/Vonix-Network/threaded-horizons/releases/tag/1.0.0).
-3. Copy `threaded-horizons-mc1.18.2-1.0.0.jar` into the instance `mods/` directory.
-4. Back up the world before first launch.
-5. Start once so `config/threadedhorizons.toml` is created, then review the configuration before use.
+1. Install Java 17, Minecraft 1.18.2, and a compatible Forge 40.x installation. The mod declares Forge range `[40.3.11,41)`.
+2. Download `threaded-horizons-mc1.18.2-1.0.0.jar` from the [1.0.0 release](https://github.com/Vonix-Network/threaded-horizons/releases/tag/1.0.0).
+3. Place the JAR in the instance's `mods/` directory. Install it on the client and server when both sides are used.
+4. Back up the world before the first launch.
+5. Start the game once, then review `config/threadedhorizons.toml` before enabling optional behavior.
 
-Do not install this release alongside a C2ME-branded artifact or enable it in a production world without an administrator-approved test and rollback plan.
+Do not install this project alongside a C2ME-branded artifact. Do not enable it in a production world without a separate test and rollback plan.
 
-## Build from source
+## Configuration and commands
 
-From the repository root with Java 17:
+Configuration is stored at `config/threadedhorizons.toml`. See [`docs/configuration.md`](docs/configuration.md) for the available settings and migration notes.
+
+The command root is `/threadedhorizons`, with `/th` as an alias:
+
+- `/th status` — display runtime status and diagnostic counters.
+- `/th notick` — show no-tick chunk counts when that feature is enabled.
+- `/th debug mobcaps` — development diagnostics; not intended as a normal gameplay command.
+
+## Known limitations
+
+This release is for testing and evaluation, not a guarantee of production safety or compatibility.
+
+- Client launch, multiplayer/login, retained-world reopening, and broad modpack compatibility were not established by the release test scope.
+- A matched disposable chunk-generation workload measured lower debug TPS with Threaded Horizons enabled than with it disabled. That result is workload-specific and should not be generalized into a performance promise.
+- Some optional integrations are intentionally deferred or fail closed when their required classes or data are unavailable.
+- Back up worlds before testing and keep a rollback copy of the previous mod set.
+
+See [`docs/limitations.md`](docs/limitations.md) for the detailed technical boundary and [`CHANGELOG.md`](CHANGELOG.md) for release-specific notes.
+
+## Building from source
+
+Requirements: Java 17 and a network connection for the initial Gradle/Forge dependency setup.
+
+From the repository root:
 
 ```shell
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ./gradlew --no-daemon clean test build
 ```
 
@@ -51,27 +81,23 @@ The reobfuscated artifact is written to:
 build/libs/threaded-horizons-mc1.18.2-1.0.0.jar
 ```
 
-## Configuration and commands
-
-Configuration is stored at `config/threadedhorizons.toml`; see [`docs/configuration.md`](docs/configuration.md).
-
-Available commands include:
-
-- `/threadedhorizons` and `/th`
-- `/threadedhorizons notick` / `/th notick` when no-tick view distance is enabled
-- `/threadedhorizons status` / `/th status`
-- Development-only `/threadedhorizons debug mobcaps`
+The project also includes a GitHub Actions build workflow at [`.github/workflows/build.yml`](.github/workflows/build.yml).
 
 ## Documentation
 
-- [`CHANGELOG.md`](CHANGELOG.md) — release history and evidence boundaries
-- [`docs/compatibility.md`](docs/compatibility.md) — supported and excluded integrations
-- [`docs/feature-ledger.md`](docs/feature-ledger.md) — feature status and evidence
-- [`docs/install.md`](docs/install.md) — installation and first-launch notes
-- [`docs/limitations.md`](docs/limitations.md) — known limitations and measured boundary
-- [`docs/overwrite-differential.md`](docs/overwrite-differential.md) — mapped-class differential scope
-- [`NOTICE.md`](NOTICE.md) — upstream provenance and copyright notices
-- [`SECURITY.md`](SECURITY.md) — vulnerability-reporting guidance
+- [`docs/install.md`](docs/install.md) — installation and first-launch notes.
+- [`docs/configuration.md`](docs/configuration.md) — configuration keys and migrations.
+- [`docs/compatibility.md`](docs/compatibility.md) — supported and excluded integrations.
+- [`docs/limitations.md`](docs/limitations.md) — known limitations and measured boundaries.
+- [`docs/feature-ledger.md`](docs/feature-ledger.md) — feature status and evidence notes.
+- [`docs/overwrite-differential.md`](docs/overwrite-differential.md) — mapped-class differential scope.
+- [`CHANGELOG.md`](CHANGELOG.md) — release history.
+- [`NOTICE.md`](NOTICE.md) — provenance and copyright notices.
+- [`SECURITY.md`](SECURITY.md) — vulnerability-reporting guidance.
+
+## Contributing
+
+Bug reports and compatibility reports are welcome through [GitHub Issues](https://github.com/Vonix-Network/threaded-horizons/issues). Include the Minecraft version, Forge version, Java version, relevant mod list, configuration scope, reproduction steps, and sanitized logs. Never include credentials, private server addresses, or signed URLs.
 
 ## License and provenance
 
