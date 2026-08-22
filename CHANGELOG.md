@@ -1,8 +1,71 @@
 # Changelog
 
+## [1.0.0] - 2026-08-22
+
+Public release for controlled testing on Minecraft **1.18.2** / Forge **40.3.11** / Java **17**, promoted from the alpha.8 repair candidate after a fresh versioned rebuild. This release preserves the tested Forge SRG worldgen callback correction and the alpha.7 Desert Temple correction.
+
+### Included
+
+- Forge SRG `CrashReport.m_127521_` worldgen exception-cleanup target.
+- Desert Temple chest-flag redirect corrected for the exact Forge bytecode.
+- The existing worldgen, chunk I/O, scheduling, lighting, failsafe, and compatibility scope from alpha.8.
+
+### Release boundary
+
+- This is a public GitHub release for controlled testing, not a production deployment.
+- A matched disposable chunk-generation comparison measured mean debug TPS of 8.95 with Threaded Horizons and 12.62 without it across two paired runs. This is workload-specific evidence, not a universal performance claim.
+- No zero-data-loss, 1:1 C2ME-parity, retained-world, client/multiplayer, or universal modpack-compatibility claim is made.
+- Back up worlds before use and do not enable Threaded Horizons in production without separate administrator authorization.
+
+## [0.1.0-alpha.8] - 2026-08-21
+
+Successor test candidate fixing the second packaged Forge startup failure found when `threadedWorldGen.enabled=true`. The worldgen holder exception-cleanup callback searched the production SRG `ChunkMap` bytecode for the official `CrashReport.forThrowable` name with remapping disabled; Forge's runtime method is `CrashReport.m_127521_`, so the callback group matched zero invocations and aborted server startup. The SRG injector now targets `m_127521_`, with a source contract test preventing regression.
+
+This successor preserves the alpha.7 Desert Temple `fuzz=14` fix and must be treated as a fresh candidate. It does not claim client/server, multiplayer, retained-world, performance, or production proof.
+
+### Verification boundary
+
+- The mandatory disposable runtime gate must set `config/threadedhorizons.toml` `[threadedWorldGen] enabled = "true"`; a default-disabled boot does not exercise this fix.
+- Parent clean tests, build, artifact inspection, and enabled-worldgen disposable packaged boot must pass for this alpha.8 artifact.
+- Independent read-only review is required against the frozen alpha.8 pin.
+- Production remains Threaded Horizons-disabled and untouched.
+
+## [0.1.0-alpha.7] - 2026-08-21
+
+Successor test candidate fixing the packaged Forge startup crash in the Desert Temple chest-flag mixin. The `postProcess` setter stores the result of `createChest(...)` into `hasPlacedChest`; Mixin's default array-access search window was too short to reach that `BASTORE`, so the required redirect matched zero targets and aborted startup. The redirect now uses the narrow `fuzz=14` window required by the exact Forge bytecode, with an ASM-backed boundary regression test.
+
+This candidate still requires a fresh packaged runtime gate. It does not claim client/server, multiplayer, retained-world, or production proof.
+
+### Verification boundary
+
+- Parent clean tests, build, artifact inspection, and disposable packaged boot must be rerun for this alpha.7 artifact.
+- Independent read-only review is required against the frozen alpha.7 pin.
+- Production remains Threaded Horizons-disabled and untouched.
+
+## [0.1.0-alpha.6] - 2026-08-21
+
+Successor testing candidate after the accepted alpha.5 static repair scope. This version bumps the artifact identity for the next disposable validation round; it does not claim packaged runtime, multiplayer, or production proof.
+
+### Included repair scope
+
+- Scheduler admission now distinguishes queued, waiting, active, and terminal work.
+- Obsolete queued generation is cancelled without interrupting active world mutation.
+- Holder-associated world-generation cancellation state is captured and cleared on normal and exception paths.
+- Scheduler shutdown and replacement complete queued work exceptionally and guard token release.
+
+### Verification boundary
+
+- Parent compilation, focused tests, full suite, and build evidence must be rerun for this alpha.6 artifact.
+- Independent read-only review is required against the frozen alpha.6 pin.
+- Production remains Threaded Horizons-disabled and untouched.
+
+## [0.1.0-alpha.5] - 2026-08-19
+
+Successor test candidate for the Threaded Horizons 1.18.2/Forge 40.3.11 repair wave. This version supersedes the previously existing local alpha.4 test artifact; it contains the same SOL-reviewed repair scope with corrected successor identity.
+
 All notable Threaded Horizons releases for Minecraft **1.18.2** / Forge **40.3.11** / Java **17**.
 
-This project is a private Vonix **unverified** prerelease series. Code-candidate acceptance is not pack proof, not a live `/tp` proof, and not a production install.
+This repository includes the historical prerelease series. Those versions were unverified candidates and should not be used in place of the `1.0.0` release.
 
 ## [0.1.0-alpha.4] - 2026-08-18
 

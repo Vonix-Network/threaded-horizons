@@ -1,0 +1,14 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "network.vonix.threadedhorizons.compatibility.mixin.iobvariantloader",
+  "compatibilityLevel": "JAVA_17",
+  "mixinPriority": 1100,
+  "mixins": [
+    "MixinSurfaceRestriction",
+    "MixinDragonVariantSpawnerUtil"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

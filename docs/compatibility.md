@@ -1,0 +1,15 @@
+# Compatibility
+
+| Component | Status |
+| --- | --- |
+| Minecraft 1.18.2 | Required |
+| Forge 40.3.11 | Required |
+| Java 17 | Required |
+| Dedicated server | Intended; client-only mixins isolated |
+| Client render-distance uncap | Client mixin config |
+| Sodium option pages | Mixin present; applies only if Sodium is loaded |
+| BetterEnd / BetterNether / Charm / Terra / The Bumblezone | Not ported; fail closed |
+| Isle of Berk 1.2.0 / Variant Loader 2.7.0 | Compat mixins require loaded FEATURES biome/sky/`isWaterBelow` chunks and fail closed if missing; ARR IoB bytecode is not packaged |
+| Incubator vector noise | Deferred / unavailable; not in source or JAR |
+
+Do not install alongside a C2ME-branded artifact. This release uses a separate mod ID.
