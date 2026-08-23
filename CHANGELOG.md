@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.1] - 2026-08-23
+
+Testing fix for a repeated 60-second Forge watchdog hang with Canary and Threaded Horizons enabled.
+
+### Fixed
+
+- Disable Threaded Horizons mid-tick chunk-task mixins when the Canary/Lithium-family chunk-access integration is loaded. Canary schedules a blocking `getChunkOffThread` join on the main-thread processor; polling that task from inside the server tick can execute the join on the server thread and deadlock the tick.
+- Added a regression test covering both compatible and skipped mixin profiles.
+
+This is a controlled testing artifact only. It does not authorize deployment to the Isle of Berk server or claim a live-server fix.
+
 ## [1.0.0] - 2026-08-22
 
 Public release for controlled testing on Minecraft **1.18.2** / Forge **40.3.11** / Java **17**, promoted from the alpha.8 repair candidate after a fresh versioned rebuild. This release preserves the tested Forge SRG worldgen callback correction and the alpha.7 Desert Temple correction.

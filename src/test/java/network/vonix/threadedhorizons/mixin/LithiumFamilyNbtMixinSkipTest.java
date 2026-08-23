@@ -13,6 +13,8 @@ class LithiumFamilyNbtMixinSkipTest {
     private static final String COMPOUND1 =
             "network.vonix.threadedhorizons.mixin.optimization.reduce_allocs.MixinNbtCompound1";
     private static final String TARGET = "net.minecraft.nbt.CompoundTag";
+    private static final String MID_TICK =
+            "network.vonix.threadedhorizons.mixin.optimization.chunkscheduling.mid_tick_chunk_tasks.MixinServerChunkManager";
 
     @Test
     void nbtRedirectMixinsApplyWithoutLithiumFamilyMods() {
@@ -27,5 +29,15 @@ class LithiumFamilyNbtMixinSkipTest {
         assertFalse(plugin.evaluate(TARGET, COMPOUND, true, Mode.ENHANCED, true),
                 "Canary redirects CompoundTag HashMap allocation; C2ME must yield");
         assertFalse(plugin.evaluate(TARGET, COMPOUND1, true, Mode.ENHANCED, true));
+    }
+
+    @Test
+    void midTickChunkTasksSkipWhenLithiumFamilyOwnsBlockingChunkAccess() {
+        ThreadedHorizonsMixinPlugin plugin = new ThreadedHorizonsMixinPlugin();
+        assertTrue(plugin.evaluate("net.minecraft.server.level.ServerChunkCache", MID_TICK,
+                true, Mode.ENHANCED, false));
+        assertFalse(plugin.evaluate("net.minecraft.server.level.ServerChunkCache", MID_TICK,
+                true, Mode.ENHANCED, true),
+                "Canary/Lithium-family getChunkOffThread must not be polled by TH mid-tick tasks");
     }
 }

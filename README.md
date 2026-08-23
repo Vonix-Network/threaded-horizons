@@ -5,7 +5,7 @@
 
 Threaded Horizons is an experimental Forge mod for **Minecraft 1.18.2**. It explores concurrent chunk generation, chunk I/O, lighting, scheduling, and related thread-safety improvements.
 
-> **Status:** `1.0.0` is available for controlled testing. Back up your world before use. Production readiness and universal compatibility have not been established.
+> **Status:** `1.0.1` is available as a controlled crash-fix testing candidate. Production readiness and universal compatibility have not been established.
 
 [Download the latest release](https://github.com/Vonix-Network/threaded-horizons/releases/latest) · [Report an issue](https://github.com/Vonix-Network/threaded-horizons/issues) · [Security policy](SECURITY.md)
 
@@ -37,7 +37,7 @@ See [`docs/compatibility.md`](docs/compatibility.md) for optional integrations a
 ## Installation
 
 1. Install Java 17, Minecraft 1.18.2, and a compatible Forge 40.x installation. The mod declares Forge range `[40.3.11,41)`.
-2. Download `threaded-horizons-mc1.18.2-1.0.0.jar` from the [1.0.0 release](https://github.com/Vonix-Network/threaded-horizons/releases/tag/1.0.0).
+2. Download `threaded-horizons-mc1.18.2-1.0.1.jar` from the [1.0.1 release](https://github.com/Vonix-Network/threaded-horizons/releases/tag/1.0.1).
 3. Place the JAR in the instance's `mods/` directory. Install it on the client and server when both sides are used.
 4. Back up the world before the first launch.
 5. Start the game once, then review `config/threadedhorizons.toml` before enabling optional behavior.
@@ -78,7 +78,7 @@ From the repository root:
 The reobfuscated artifact is written to:
 
 ```text
-build/libs/threaded-horizons-mc1.18.2-1.0.0.jar
+build/libs/threaded-horizons-mc1.18.2-1.0.1.jar
 ```
 
 The project also includes a GitHub Actions build workflow at [`.github/workflows/build.yml`](.github/workflows/build.yml).

@@ -74,7 +74,13 @@ public class ThreadedHorizonsMixinPlugin implements IMixinConfigPlugin {
         if (mixinClassName.startsWith("network.vonix.threadedhorizons.mixin.threading.lighting."))
             return !LoaderHooks.isModLoaded("lightbench");
         if (mixinClassName.startsWith("network.vonix.threadedhorizons.mixin.optimization.chunkscheduling.mid_tick_chunk_tasks."))
-            return ThreadedHorizonsConfig.generalOptimizationsConfig.doMidTickChunkTasks;
+            // Canary/Lithium-family chunk access adds a blocking getChunkOffThread
+            // task to the main-thread processor. Polling that task from inside a
+            // server tick executes the blocking join on the server thread and
+            // deadlocks the watchdog path. Let the compatibility family own this
+            // scheduling path instead of applying both implementations.
+            return ThreadedHorizonsConfig.generalOptimizationsConfig.doMidTickChunkTasks
+                    && !lithiumFamilyLoaded;
         if (mixinClassName.startsWith("network.vonix.threadedhorizons.mixin.chunkio."))
             return ThreadedHorizonsConfig.ioSystemConfig.replaceImpl;
         if (mixinClassName.equals("network.vonix.threadedhorizons.mixin.optimization.reduce_allocs.MixinNbtCompound") ||

@@ -216,7 +216,8 @@ public class ThreadedHorizonsConfig {
                              This helps chunks loading and generating under high MSPT but may raise \s
                              MSPT when chunks are loading or generating \s
                              \s
-                             Incompatible with Dimensional Threading (dimthread)
+                             Incompatible with Dimensional Threading (dimthread) and Canary/Lithium-family chunk access;
+                             the mixin plugin disables this path when that family is loaded
                             """,
                     List.of("dimthread"), false, true);
             this.autoSaveConfig = new AutoSaveConfig(ConfigUtils.getValue(configScope, "autoSave", ConfigUtils::config, "Configuration for auto-save", List.of(), null, true));
