@@ -1,6 +1,7 @@
 # Known limitations
 
 - Public 1.0.0 release for controlled testing. Back up worlds before use.
+- With ModernFix loaded, the optional constructor-time asynchronous structure warmup is intentionally disabled because ModernFix initializes `StrongholdLocationCache` later than `ChunkMap`; structure generation remains available on demand. This is a compatibility guard, not proof of every ModernFix feature interaction.
 - `optimizeAsyncChunkRequest` is retired on this Forge 1.18.2 port. The mixin is hard-skipped and config v3 migrates persisted `true` to `false`. Re-enabling the key does not restore the `/tp`-deadlocking `CFUtil.join` path.
 - `reduceLockRadius` defaults and migrates `true` on config v4. It is write/lock ownership only. WorldGenRegion `hasChunk`/`getChunk` stay vanilla `firstPos`/`lastPos`. Isle of Berk / Variant Loader biome, sky, and `isWaterBelow` reads fail closed if the chunk is missing. Threaded worldgen stays enabled.
 - A matched disposable chunk-generation comparison completed twice: mean debug TPS was 8.95 with Threaded Horizons and 12.62 without it. This is workload-specific evidence, not a universal performance claim.

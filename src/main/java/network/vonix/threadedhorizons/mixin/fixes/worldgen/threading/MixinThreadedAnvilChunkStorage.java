@@ -1,6 +1,8 @@
 package network.vonix.threadedhorizons.mixin.fixes.worldgen.threading;
 
 import network.vonix.threadedhorizons.common.GlobalExecutors;
+import network.vonix.threadedhorizons.common.worldgen.StructureGeneration;
+import network.vonix.threadedhorizons.platform.LoaderHooks;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import org.spongepowered.asm.mixin.Mixin;
@@ -17,6 +19,12 @@ public class MixinThreadedAnvilChunkStorage {
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void onInit(CallbackInfo info) {
+        if (!StructureGeneration.shouldUseAsyncWarmup(LoaderHooks.isModLoaded("modernfix"))) {
+            org.slf4j.LoggerFactory.getLogger("Threaded Horizons").info(
+                    "Skipping async structure warmup while ModernFix is loaded; generation remains on-demand"
+            );
+            return;
+        }
         GlobalExecutors.executor.execute(() -> {
             try {
                 this.generator.ensureStructuresGenerated();

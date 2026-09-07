@@ -215,16 +215,13 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
                     LOGGER.error("Failed to store chunk {},{}", chunkPos.x, chunkPos.z, throwable);
                 }
             });
-            try {
-                stored.join();
-            } catch (Throwable throwable) {
-                DirtyChunkGenerations.applyStoreOutcome(chunk, generation, throwable);
-                this.level.getProfiler().pop();
-                return false;
-            }
+            // The storage write is deliberately asynchronous. Blocking the server thread here
+            // deadlocks shutdown and can prevent vanilla from reaching its save barrier. The
+            // completion callback keeps the chunk dirty until the exact generation is durable;
+            // processUnloads/flushWorker join the tracked futures at the appropriate barrier.
             this.markPosition(chunkPos, chunkStatus.getChunkType());
             this.level.getProfiler().pop();
-            return !stored.isCompletedExceptionally();
+            return true;
         } catch (Exception exception) {
             DirtyChunkGenerations.applyStoreOutcome(chunk, generation, exception);
             LOGGER.error("Failed to save chunk {},{}", chunkPos.x, chunkPos.z, exception);

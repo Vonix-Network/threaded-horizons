@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.2] - 2026-09-07
+
+Compatibility successor for the Minecraft 1.18.2 Forge 40.3.11 pack lane.
+
+### Fixed
+
+- Skip Threaded Horizons' optional constructor-time asynchronous structure warmup when ModernFix is loaded. ModernFix initializes its `StrongholdLocationCache` later in the server lifecycle; the previous warmup could race that initialization and emit a `NullPointerException` before falling back to on-demand generation.
+- Preserve on-demand structure generation and add a regression test for the ModernFix compatibility boundary.
+
+This is a candidate for controlled pack verification. It does not claim universal compatibility or authorize production deployment.
+
 ## [1.0.1] - 2026-08-23
 
 Testing fix for a repeated 60-second Forge watchdog hang with Canary and Threaded Horizons enabled.

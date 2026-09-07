@@ -6,6 +6,7 @@
 | Forge 40.3.11 | Required |
 | Java 17 | Required |
 | Dedicated server | Intended; client-only mixins isolated |
+| ModernFix | Constructor-time async structure warmup is disabled; structure generation remains on-demand to avoid racing `StrongholdLocationCache` initialization |
 | Client render-distance uncap | Client mixin config |
 | Canary / Lithium-family chunk access | Mid-tick chunk-task mixins disabled to avoid executing Canary's blocking `getChunkOffThread` join on the server thread |
 | Sodium option pages | Mixin present; applies only if Sodium is loaded |

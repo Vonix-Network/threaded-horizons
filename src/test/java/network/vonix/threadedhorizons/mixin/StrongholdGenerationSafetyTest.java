@@ -9,6 +9,14 @@ import static org.junit.jupiter.api.Assertions.fail;
 class StrongholdGenerationSafetyTest {
 
     @Test
+    void modernFixDisablesOnlyTheUnsafeConstructorWarmup() {
+        assertFalse(network.vonix.threadedhorizons.common.worldgen.StructureGeneration
+                .shouldUseAsyncWarmup(true));
+        assertTrue(network.vonix.threadedhorizons.common.worldgen.StructureGeneration
+                .shouldUseAsyncWarmup(false));
+    }
+
+    @Test
     void failedWarmupDoesNotLatchGeneratedFlag() {
         RecordingGenerator generator = new RecordingGenerator();
         generator.failNext = true;
