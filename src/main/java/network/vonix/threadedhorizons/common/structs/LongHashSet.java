@@ -2,16 +2,19 @@ package network.vonix.threadedhorizons.common.structs;
 
 import it.unimi.dsi.fastutil.longs.LongCollection;
 import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Collection;
-import java.util.HashSet;
-import java.util.Iterator;
 
+/**
+ * {@link LongSet} backed by an unboxed open hash set. Replaces a boxed
+ * {@code HashSet<Long>} that previously retained an object per pending unload.
+ */
 public class LongHashSet implements LongSet {
 
-    private final HashSet<Long> delegate = new HashSet<>();
+    private final LongOpenHashSet delegate = new LongOpenHashSet();
 
     @Override
     public int size() {
@@ -25,23 +28,7 @@ public class LongHashSet implements LongSet {
 
     @Override
     public @NotNull LongIterator iterator() {
-        final Iterator<Long> iterator = delegate.iterator();
-        return new LongIterator() {
-            @Override
-            public long nextLong() {
-                return iterator.next();
-            }
-
-            @Override
-            public boolean hasNext() {
-                return iterator.hasNext();
-            }
-
-            @Override
-            public void remove() {
-                iterator.remove();
-            }
-        };
+        return delegate.iterator();
     }
 
     @NotNull
@@ -94,21 +81,17 @@ public class LongHashSet implements LongSet {
 
     @Override
     public long[] toLongArray() {
-        return delegate.stream().mapToLong(value -> value).toArray();
+        return delegate.toLongArray();
     }
 
     @Override
     public long[] toLongArray(long[] a) {
-        final long[] longs = toLongArray();
-        for (int i = 0; i < longs.length && i < a.length; i++) {
-            a[i] = longs[i];
-        }
-        return a;
+        return delegate.toLongArray(a);
     }
 
     @Override
     public long[] toArray(long[] a) {
-        return toLongArray(a);
+        return delegate.toArray(a);
     }
 
     @Override

@@ -28,7 +28,7 @@ class ConfigVersion3SafetyMigrationTest {
 
         Updaters.update(config);
 
-        assertEquals(4L, config.getLongOrElse("version", 0L));
+        assertEquals(5L, config.getLongOrElse("version", 0L));
         assertEquals(Boolean.FALSE, config.get("generalOptimizations.optimizeAsyncChunkRequest"));
         assertEquals(Boolean.TRUE, config.get("threadedWorldGen.reduceLockRadius"));
         assertEquals(Boolean.TRUE, config.get("threadedWorldGen.enabled"));
@@ -50,7 +50,7 @@ class ConfigVersion3SafetyMigrationTest {
 
         Updaters.update(config);
 
-        assertEquals(4L, config.getLongOrElse("version", 0L));
+        assertEquals(5L, config.getLongOrElse("version", 0L));
         assertEquals(Boolean.FALSE, config.get("generalOptimizations.optimizeAsyncChunkRequest"));
         assertEquals(Boolean.TRUE, config.get("threadedWorldGen.reduceLockRadius"));
     }

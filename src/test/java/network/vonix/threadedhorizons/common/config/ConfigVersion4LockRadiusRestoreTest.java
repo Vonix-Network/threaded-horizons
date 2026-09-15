@@ -28,7 +28,7 @@ class ConfigVersion4LockRadiusRestoreTest {
 
         Updaters.update(config);
 
-        assertEquals(4L, config.getLongOrElse("version", 0L));
+        assertEquals(5L, config.getLongOrElse("version", 0L));
         assertEquals(Boolean.FALSE, config.get("generalOptimizations.optimizeAsyncChunkRequest"));
         assertEquals(Boolean.TRUE, config.get("threadedWorldGen.reduceLockRadius"));
         assertEquals(Boolean.TRUE, config.get("threadedWorldGen.enabled"));
@@ -50,13 +50,13 @@ class ConfigVersion4LockRadiusRestoreTest {
 
         Updaters.update(config);
 
-        assertEquals(4L, config.getLongOrElse("version", 0L));
+        assertEquals(5L, config.getLongOrElse("version", 0L));
         assertEquals(Boolean.FALSE, config.get("generalOptimizations.optimizeAsyncChunkRequest"));
         assertEquals(Boolean.TRUE, config.get("threadedWorldGen.reduceLockRadius"));
     }
 
     @Test
-    void version4IsTerminal() {
+    void version4MigratesToVersion5WithoutChangingLockRadius() {
         CommentedConfig config = CommentedConfig.of(LinkedHashMap::new, InMemoryCommentedFormat.defaultInstance());
         config.set("version", 4L);
 
@@ -66,7 +66,26 @@ class ConfigVersion4LockRadiusRestoreTest {
 
         Updaters.update(config);
 
-        assertEquals(4L, config.getLongOrElse("version", 0L));
+        assertEquals(5L, config.getLongOrElse("version", 0L));
         assertEquals(Boolean.FALSE, config.get("threadedWorldGen.reduceLockRadius"));
+    }
+
+    @Test
+    void version5IsTerminal() {
+        CommentedConfig config = CommentedConfig.of(LinkedHashMap::new, InMemoryCommentedFormat.defaultInstance());
+        config.set("version", 5L);
+
+        CommentedConfig worldGen = CommentedConfig.of(LinkedHashMap::new, InMemoryCommentedFormat.defaultInstance());
+        worldGen.set("reduceLockRadius", false);
+        config.set("threadedWorldGen", worldGen);
+        CommentedConfig io = CommentedConfig.of(LinkedHashMap::new, InMemoryCommentedFormat.defaultInstance());
+        io.set("chunkDataCacheLimit", 20000);
+        config.set("ioSystem", io);
+
+        Updaters.update(config);
+
+        assertEquals(5L, config.getLongOrElse("version", 0L));
+        assertEquals(Boolean.FALSE, config.get("threadedWorldGen.reduceLockRadius"));
+        assertEquals(20000, ((Number) config.get("ioSystem.chunkDataCacheLimit")).intValue());
     }
 }

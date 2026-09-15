@@ -7,12 +7,18 @@ import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
 import net.minecraft.world.level.levelgen.feature.configurations.FeatureConfiguration;
 import net.minecraft.world.level.levelgen.feature.FeaturePlaceContext;
 
+import network.vonix.threadedhorizons.common.lifecycle.WorkerThreadLocals;
+
 import java.util.Optional;
 import java.util.Random;
 
 public class PooledFeatureContext<FC extends FeatureConfiguration> extends FeaturePlaceContext<FC> {
 
-    public static final ThreadLocal<SimpleObjectPool<PooledFeatureContext<?>>> POOL = ThreadLocal.withInitial(() -> new SimpleObjectPool<>(unused -> new PooledFeatureContext<>(), unused -> {}, 2048));
+    /** Per-worker pool. Capacity is a bound, not a preallocated reservation. */
+    public static final int POOL_CAPACITY = 64;
+
+    public static final ThreadLocal<SimpleObjectPool<PooledFeatureContext<?>>> POOL = WorkerThreadLocals.create(
+            () -> new SimpleObjectPool<>(unused -> new PooledFeatureContext<>(), unused -> {}, POOL_CAPACITY));
 
     private Optional<ConfiguredFeature<?, ?>> feature;
     private WorldGenLevel world;

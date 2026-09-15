@@ -6,6 +6,7 @@ import com.mojang.logging.LogUtils;
 import it.unimi.dsi.fastutil.longs.Long2BooleanLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2BooleanMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.ObjectBidirectionalIterator;
@@ -20,6 +21,9 @@ import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 public class PlayerNoTickDistanceMap extends ChunkTracker {
 
@@ -29,6 +33,8 @@ public class PlayerNoTickDistanceMap extends ChunkTracker {
     private static final int MAX_TICKET_UPDATES_PER_TICK = ThreadedHorizonsConfig.noTickViewDistanceConfig.updatesPerTick;
 
     private final LongSet sourceChunks = new LongOpenHashSet();
+    private final Long2IntOpenHashMap sourceChunkRefCounts = new Long2IntOpenHashMap();
+    private final Map<UUID, Long> playerSources = new HashMap<>();
     private final Long2IntOpenHashMap distanceFromNearestPlayer = new Long2IntOpenHashMap();
     private final Long2BooleanLinkedOpenHashMap pendingTicketUpdates = new Long2BooleanLinkedOpenHashMap();
     private final LongOpenHashSet managedChunkTickets = new LongOpenHashSet();
@@ -43,6 +49,7 @@ public class PlayerNoTickDistanceMap extends ChunkTracker {
         this.chunkTicketManager = chunkTicketManager;
         this.noTickSystem = noTickSystem;
         this.distanceFromNearestPlayer.defaultReturnValue(251);
+        this.sourceChunkRefCounts.defaultReturnValue(0);
         this.setViewDistance(12);
     }
 
@@ -76,21 +83,72 @@ public class PlayerNoTickDistanceMap extends ChunkTracker {
     }
 
     public void addSource(ChunkPos chunkPos) {
-        this.update(chunkPos.toLong(), 249 - this.viewDistance, true);
-        this.sourceChunks.add(chunkPos.toLong());
+        addSourceInternal(chunkPos.toLong());
     }
 
     public void removeSource(ChunkPos chunkPos) {
-        this.update(chunkPos.toLong(), Integer.MAX_VALUE, false);
-        this.sourceChunks.remove(chunkPos.toLong());
+        removeSourceInternal(chunkPos.toLong());
+    }
+
+    public void addSource(UUID playerId, ChunkPos chunkPos) {
+        if (playerId == null) {
+            addSource(chunkPos);
+            return;
+        }
+        final long next = chunkPos.toLong();
+        final Long previous = this.playerSources.put(playerId, next);
+        if (previous != null && previous == next) {
+            return;
+        }
+        if (previous != null) {
+            removeSourceInternal(previous);
+        }
+        addSourceInternal(next);
+    }
+
+    public void removeSource(UUID playerId, ChunkPos chunkPos) {
+        if (playerId == null) {
+            removeSource(chunkPos);
+            return;
+        }
+        final long key = chunkPos.toLong();
+        final Long active = this.playerSources.get(playerId);
+        if (active == null || active != key) {
+            return;
+        }
+        this.playerSources.remove(playerId);
+        removeSourceInternal(key);
+    }
+
+    private void addSourceInternal(long chunkPos) {
+        int references = this.sourceChunkRefCounts.get(chunkPos);
+        this.sourceChunkRefCounts.put(chunkPos, references + 1);
+        if (references == 0) {
+            this.update(chunkPos, 249 - this.viewDistance, true);
+            this.sourceChunks.add(chunkPos);
+        }
+    }
+
+    private void removeSourceInternal(long chunkPos) {
+        int references = this.sourceChunkRefCounts.get(chunkPos);
+        if (references <= 0) {
+            return;
+        }
+        if (references == 1) {
+            this.sourceChunkRefCounts.remove(chunkPos);
+            this.update(chunkPos, Integer.MAX_VALUE, false);
+            this.sourceChunks.remove(chunkPos);
+        } else {
+            this.sourceChunkRefCounts.put(chunkPos, references - 1);
+        }
     }
 
     public boolean update() {
         final int pendingRawUpdateCount = this.getQueueSize();
         if (pendingRawUpdateCount == 0) return false;
         final boolean hasLightWork = this.runUpdates(Integer.MAX_VALUE) != Integer.MAX_VALUE;
-        if (hasLightWork) {
-            // resort updates
+        if (hasLightWork && this.pendingTicketUpdates.size() > MAX_TICKET_UPDATES_PER_TICK) {
+            // Sort only when the budget cannot apply every pending entry this tick.
             final ArrayList<Long2BooleanMap.Entry> entries = new ArrayList<>(this.pendingTicketUpdates.long2BooleanEntrySet());
             entries.sort(Comparator.comparingInt(o -> this.distanceFromNearestPlayer.get(o.getLongKey())));
             for (Long2BooleanMap.Entry entry : entries) {
@@ -151,11 +209,18 @@ public class PlayerNoTickDistanceMap extends ChunkTracker {
     }
 
     public void setViewDistance(int viewDistance) {
-        this.viewDistance = Mth.clamp(viewDistance, 3, 249);
-        sourceChunks.forEach((long value) -> {
-            removeSource(new ChunkPos(value));
-            addSource(new ChunkPos(value));
-        });
+        final int previous = this.viewDistance;
+        final int next = Mth.clamp(viewDistance, 3, 249);
+        this.viewDistance = next;
+        if (previous == next) {
+            return;
+        }
+        LongIterator iterator = this.sourceChunks.iterator();
+        while (iterator.hasNext()) {
+            long value = iterator.nextLong();
+            this.update(value, 249 - previous, false);
+            this.update(value, 249 - next, true);
+        }
     }
 
     public int getPendingTicketUpdatesCount() {

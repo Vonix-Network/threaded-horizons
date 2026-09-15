@@ -150,6 +150,81 @@ public class DirtyChunkGenerationsTest {
     }
 
     @Test
+    void holderPathDoesNotGrowStripeMapAndKeepsDurabilityContract() throws Exception {
+        int before = DirtyChunkGenerations.generationEntryCount();
+        FakeHolder chunk = new FakeHolder();
+        long mutation = DirtyChunkGenerations.markMutated(chunk);
+        assertEquals(1L, mutation);
+        assertEquals(before, DirtyChunkGenerations.generationEntryCount(),
+                "per-chunk holder storage must not insert a WeakHashMap stripe entry");
+        AtomicBoolean unsaved = new AtomicBoolean(true);
+        assertTrue(DirtyChunkGenerations.applyStoreOutcome(chunk, mutation, true, unsaved));
+        assertFalse(unsaved.get());
+        assertEquals(0L, DirtyChunkGenerations.current(chunk));
+        DirtyChunkGenerationsTest.assertMutationBetweenValidationAndClearSurvivesHolder();
+    }
+
+    static void assertMutationBetweenValidationAndClearSurvivesHolder() throws Exception {
+        FakeHolder chunk = new FakeHolder();
+        AtomicBoolean unsaved = new AtomicBoolean(true);
+        long saveGeneration = DirtyChunkGenerations.markMutated(chunk);
+        CountDownLatch validated = new CountDownLatch(1);
+        CountDownLatch mutated = new CountDownLatch(1);
+        DirtyChunkGenerations.hooks.afterValidationBeforeClear = (key, observed) -> {
+            assertEquals(chunk, key);
+            assertEquals(saveGeneration, observed);
+            validated.countDown();
+            try {
+                if (!mutated.await(5, TimeUnit.SECONDS)) {
+                    throw new RuntimeException("holder interleave latch timed out");
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(interrupted);
+            }
+        };
+        try {
+            CompletableFuture<Boolean> cleared = CompletableFuture.supplyAsync(
+                    () -> DirtyChunkGenerations.applyStoreOutcome(chunk, saveGeneration, true, unsaved));
+            assertTrue(validated.await(5, TimeUnit.SECONDS));
+            long overlapping = DirtyChunkGenerations.markMutated(chunk);
+            unsaved.set(true);
+            mutated.countDown();
+            assertFalse(cleared.get(5, TimeUnit.SECONDS));
+            assertTrue(unsaved.get());
+            assertEquals(overlapping, DirtyChunkGenerations.current(chunk));
+        } finally {
+            DirtyChunkGenerations.hooks.reset();
+            DirtyChunkGenerations.forget(chunk);
+        }
+    }
+
+    private static final class FakeHolder implements DirtyGenerationHolder {
+        private final AtomicLong generation = new AtomicLong();
+        private final Object lock = new Object();
+
+        @Override
+        public long markDirtyGeneration() {
+            return this.generation.incrementAndGet();
+        }
+
+        @Override
+        public long currentDirtyGeneration() {
+            return this.generation.get();
+        }
+
+        @Override
+        public void forgetDirtyGeneration() {
+            this.generation.set(0L);
+        }
+
+        @Override
+        public Object dirtyGenerationLock() {
+            return this.lock;
+        }
+    }
+
+    @Test
     void raceMarkMutatedApplyStoreAndForgetNeverClearsNewerMutation() throws Exception {
         Object chunk = new Object();
         AtomicBoolean unsaved = new AtomicBoolean(true);

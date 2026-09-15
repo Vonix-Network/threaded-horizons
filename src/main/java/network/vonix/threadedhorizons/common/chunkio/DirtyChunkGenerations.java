@@ -43,6 +43,11 @@ public final class DirtyChunkGenerations {
         if (chunk == null) {
             return 0L;
         }
+        if (chunk instanceof DirtyGenerationHolder holder) {
+            synchronized (holder.dirtyGenerationLock()) {
+                return holder.markDirtyGeneration();
+            }
+        }
         synchronized (lockFor(chunk)) {
             return generationsFor(chunk).computeIfAbsent(chunk, unused -> new AtomicLong()).incrementAndGet();
         }
@@ -52,6 +57,11 @@ public final class DirtyChunkGenerations {
         if (chunk == null) {
             return 0L;
         }
+        if (chunk instanceof DirtyGenerationHolder holder) {
+            synchronized (holder.dirtyGenerationLock()) {
+                return holder.currentDirtyGeneration();
+            }
+        }
         synchronized (lockFor(chunk)) {
             return currentUnlocked(chunk);
         }
@@ -60,6 +70,11 @@ public final class DirtyChunkGenerations {
     public static long current(Object chunk) {
         if (chunk == null) {
             return 0L;
+        }
+        if (chunk instanceof DirtyGenerationHolder holder) {
+            synchronized (holder.dirtyGenerationLock()) {
+                return holder.currentDirtyGeneration();
+            }
         }
         synchronized (lockFor(chunk)) {
             return currentUnlocked(chunk);
@@ -106,6 +121,12 @@ public final class DirtyChunkGenerations {
         if (chunk == null) {
             return;
         }
+        if (chunk instanceof DirtyGenerationHolder holder) {
+            synchronized (holder.dirtyGenerationLock()) {
+                holder.forgetDirtyGeneration();
+            }
+            return;
+        }
         synchronized (lockFor(chunk)) {
             generationsFor(chunk).remove(chunk);
         }
@@ -122,18 +143,18 @@ public final class DirtyChunkGenerations {
         if (chunk == null) {
             return false;
         }
-        Object lock = lockFor(chunk);
+        Object lock = lockForObject(chunk);
         long observed;
         synchronized (lock) {
-            observed = currentUnlocked(chunk);
+            observed = currentUnlockedObject(chunk);
         }
         hooks.fireAfterValidation(chunk, observed);
         synchronized (lock) {
-            if (durableSuccess && currentUnlocked(chunk) == saveGeneration) {
+            if (durableSuccess && currentUnlockedObject(chunk) == saveGeneration) {
                 if (clearUnsaved != null) {
                     clearUnsaved.run();
                 }
-                generationsFor(chunk).remove(chunk);
+                forgetUnlocked(chunk);
                 return true;
             }
             if (!durableSuccess && isUnsaved != null && markUnsaved != null && !isUnsaved.getAsBoolean()) {
@@ -141,6 +162,28 @@ public final class DirtyChunkGenerations {
             }
             return false;
         }
+    }
+
+    private static Object lockForObject(Object chunk) {
+        if (chunk instanceof DirtyGenerationHolder holder) {
+            return holder.dirtyGenerationLock();
+        }
+        return lockFor(chunk);
+    }
+
+    private static long currentUnlockedObject(Object chunk) {
+        if (chunk instanceof DirtyGenerationHolder holder) {
+            return holder.currentDirtyGeneration();
+        }
+        return currentUnlocked(chunk);
+    }
+
+    private static void forgetUnlocked(Object chunk) {
+        if (chunk instanceof DirtyGenerationHolder holder) {
+            holder.forgetDirtyGeneration();
+            return;
+        }
+        generationsFor(chunk).remove(chunk);
     }
 
     private static long currentUnlocked(Object chunk) {

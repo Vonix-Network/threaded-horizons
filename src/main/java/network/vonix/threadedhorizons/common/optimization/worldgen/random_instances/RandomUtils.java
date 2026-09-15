@@ -1,5 +1,6 @@
 package network.vonix.threadedhorizons.common.optimization.worldgen.random_instances;
 
+import network.vonix.threadedhorizons.common.lifecycle.WorkerThreadLocals;
 import network.vonix.threadedhorizons.mixin.access.IAtomicSimpleRandomDeriver;
 import network.vonix.threadedhorizons.mixin.access.ISimpleRandom;
 import network.vonix.threadedhorizons.mixin.access.IXoroshiro128PlusPlusRandom;
@@ -14,8 +15,8 @@ import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 
 public class RandomUtils {
 
-    private static final ThreadLocal<XoroshiroRandomSource> xoroshiro = ThreadLocal.withInitial(() -> new XoroshiroRandomSource(0L, 0L));
-    private static final ThreadLocal<SingleThreadedRandomSource> simple = ThreadLocal.withInitial(() -> new SingleThreadedRandomSource(0L));
+    private static final ThreadLocal<XoroshiroRandomSource> xoroshiro = WorkerThreadLocals.create(() -> new XoroshiroRandomSource(0L, 0L));
+    private static final ThreadLocal<SingleThreadedRandomSource> simple = WorkerThreadLocals.create(() -> new SingleThreadedRandomSource(0L));
 
     public static void derive(PositionalRandomFactory deriver, RandomSource random, int x, int y, int z) {
         if (deriver instanceof XoroshiroRandomSource.XoroshiroPositionalRandomFactory) {

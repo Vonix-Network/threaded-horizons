@@ -64,6 +64,9 @@ public class ThreadedHorizonsMixinPlugin implements IMixinConfigPlugin {
         if (mixinClassName.startsWith("network.vonix.threadedhorizons.mixin.optimization.worldgen.vanilla_optimization.the_end_biome_cache."))
             return ThreadedHorizonsConfig.vanillaWorldGenOptimizationsConfig.useEndBiomeCache;
         if (mixinClassName.startsWith("network.vonix.threadedhorizons.mixin.optimization.chunkaccess.async_chunk_request."))
+            // Deliberate safety exclusion: the inherited CFUtil.join onto
+            // mainThreadProcessor deadlocks /tp. Re-enabling the config key
+            // must not apply this mixin.
             return false;
         if (mixinClassName.startsWith("network.vonix.threadedhorizons.mixin.notickvd."))
             return ThreadedHorizonsConfig.noTickViewDistanceConfig.enabled;

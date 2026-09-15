@@ -39,7 +39,7 @@ public class MixinServerChunkManager {
     @Redirect(method = "tickChunks", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/ServerLevel;getAllEntities()Ljava/lang/Iterable;"))
     private Iterable<Entity> redirectIterateEntities(ServerLevel serverWorld) {
         LongSet noTickOnlyChunks = ((IChunkTicketManager) this.distanceManager).getNoTickOnlyChunks();
-        if (noTickOnlyChunks == null) {
+        if (noTickOnlyChunks == null || noTickOnlyChunks.isEmpty()) {
             return serverWorld.getAllEntities();
         }
         return new FilteringIterable<>(serverWorld.getAllEntities(), entity ->

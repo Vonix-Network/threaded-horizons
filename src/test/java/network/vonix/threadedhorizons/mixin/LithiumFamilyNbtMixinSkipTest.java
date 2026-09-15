@@ -27,7 +27,7 @@ class LithiumFamilyNbtMixinSkipTest {
     void nbtRedirectMixinsSkipWhenCanaryIsPresent() {
         ThreadedHorizonsMixinPlugin plugin = new ThreadedHorizonsMixinPlugin();
         assertFalse(plugin.evaluate(TARGET, COMPOUND, true, Mode.ENHANCED, true),
-                "Canary redirects CompoundTag HashMap allocation; C2ME must yield");
+                "Lithium-family mods own the CompoundTag HashMap redirect; TH must yield");
         assertFalse(plugin.evaluate(TARGET, COMPOUND1, true, Mode.ENHANCED, true));
     }
 
@@ -38,6 +38,6 @@ class LithiumFamilyNbtMixinSkipTest {
                 true, Mode.ENHANCED, false));
         assertFalse(plugin.evaluate("net.minecraft.server.level.ServerChunkCache", MID_TICK,
                 true, Mode.ENHANCED, true),
-                "Canary/Lithium-family getChunkOffThread must not be polled by TH mid-tick tasks");
+                "Lithium-family getChunkOffThread must not be polled by TH mid-tick tasks");
     }
 }

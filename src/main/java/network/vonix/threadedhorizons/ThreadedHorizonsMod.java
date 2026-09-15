@@ -42,6 +42,7 @@ public class ThreadedHorizonsMod {
     }
 
     private void onInitialize() {
+        LoaderHooks.rejectUnsupportedC2meCoexistence();
         if (Boolean.getBoolean("network.vonix.threadedhorizons.mixin.doAudit")) {
             MixinEnvironment.getCurrentEnvironment().audit();
         }

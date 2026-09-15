@@ -52,6 +52,30 @@ class NoTickSystemTest {
     }
 
     @Test
+    void sharedPlayerSourcesRemainActiveAfterOnePlayerLeavesAndViewDistanceChanges() throws Exception {
+        NoTickSystem system = NoTickSystem.createForTest();
+        PlayerNoTickDistanceMap map = system.playerNoTickDistanceMap();
+        ChunkPos shared = new ChunkPos(17, 18);
+        java.util.UUID firstPlayer = java.util.UUID.fromString("00000000-0000-0000-0000-000000000001");
+        java.util.UUID secondPlayer = java.util.UUID.fromString("00000000-0000-0000-0000-000000000002");
+
+        map.addSource(firstPlayer, shared);
+        map.addSource(secondPlayer, shared);
+        map.removeSource(firstPlayer, shared);
+
+        java.lang.reflect.Field field = PlayerNoTickDistanceMap.class.getDeclaredField("sourceChunks");
+        field.setAccessible(true);
+        LongSet sources = (LongSet) field.get(map);
+        assertTrue(sources.contains(shared.toLong()), "one remaining player must keep the shared source active");
+
+        map.setViewDistance(24);
+        assertTrue(sources.contains(shared.toLong()), "view-distance updates must retain remaining player sources");
+
+        map.removeSource(secondPlayer, shared);
+        assertFalse(sources.contains(shared.toLong()), "source must clear after the final player leaves");
+    }
+
+    @Test
     void pendingNoTickTicketAdmissionPublishesSnapshotWithoutFurtherDistanceUpdates() {
         NoTickSystem system = NoTickSystem.createForTest();
         long key = ChunkPos.asLong(10, 10);

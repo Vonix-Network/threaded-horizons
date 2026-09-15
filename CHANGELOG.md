@@ -1,5 +1,111 @@
 # Changelog
 
+## [1.0.7] - 2026-09-14
+
+RAM and allocation-churn successor for the controlled Forge 1.18.2 candidate. This version is test-only and does not claim production readiness, universal compatibility, measured RAM reduction, or performance improvement.
+
+### Changed
+
+- Chunk save tracking no longer retains a `ConcurrentLinkedQueue` of store futures or walks it every tick. In-flight saves use an atomic counter; `processUnloads` / `flushWorker` wait for idle instead of allocating `CompletableFuture.allOf` nodes. The dirty-generation contract is unchanged: `unsaved` is not cleared until the store future completes, and a newer mutation still wins.
+- `replaceImpl` storage no longer deep-copies an already-isolated snapshot during serialize. The public `store` API still copies so callers can mutate the tag they passed. The `ChunkMap.save` path transfers ownership of the freshly written tag when the optimized storage implementation is active.
+- Async serialization lighting snapshots copy a `DataLayer` only when `ChunkSerializer.write` first reads that section, and they no longer retain a `SectionPos`-keyed map of every light section. Block-entity snapshot construction no longer uses stream collectors or a diagnostic `HashSet`.
+- Combined-lock retries reuse a per-lock token array instead of allocating `LockEntry` / extra `ChunkPos` collections on every `tryAcquire`. Default pending/admitted lock ceilings follow the worldgen pipeline limit (still fail-closed, still capped at 65,536).
+- Dirty-generation counters for live `ChunkAccess` instances live on the chunk via mixin. The striped `WeakHashMap` remains only as a fallback for non-chunk keys (unit tests). Block placement no longer contends on 64 global monitors.
+- No-tick pending-ticket sorting is skipped when the whole pending set fits in the per-tick budget. View-distance rebuilds iterate source chunks without a `toLongArray()` copy.
+- Unload `toDrop` tracking uses an unboxed `LongOpenHashSet` instead of `HashSet<Long>`.
+- Reduced-task-radius `System.out.printf` is gated behind `network.vonix.threadedhorizons.debug.logTaskRadius`.
+
+### Intentionally unchanged
+
+- `optimizeAsyncChunkRequest` remains retired. `useGlobalBiomeCache` remains false. The ModernFix structure-warmup guard and Lithium-family `mid_tick_chunk_tasks` skip remain. YUNG's Bridges still forces FEATURES single-threading.
+- IO worker `chunkDataCacheLimit` default stays 6144. Lowering it would change I/O coalescing versus 1.0.6; the existing config keys remain the owner-tunable bound.
+- The global save barrier in `processUnloads` / `flushWorker` is kept. Narrowing it to unloaded positions only would require a retained per-position future set, which this candidate is trying to remove.
+
+### Verification boundary
+
+- Fresh Java 17 command: `./gradlew clean test build --no-daemon`; 217 tests passed, 0 failures, 0 errors, 0 skipped, and the completion scan passed.
+- Current local artifact: `build/libs/threaded-horizons-mc1.18.2-1.0.7.jar`, 1,071,912 bytes, SHA-256 `e98db0a079b1dc209cbc9003889b5765748730d29551de41f0302f80781ff8c0`.
+- Allocation removals are structural (copies, queues, per-tick walks, maps). They are not a measured live-server RAM result.
+- The earlier 1.0.7 review packet predates the packaged-description correction and is stale for this successor; this source snapshot is not accepted or released.
+- Production deployment, restart, player-path validation, long-duration RAM testing, MSPT/chunk-generation measurement, and performance claims remain outside this candidate.
+
+## [1.0.6] - 2026-09-13
+
+Lighting compatibility repair successor for the controlled Forge 1.18.2 candidate. This version is test-only and does not claim production readiness, universal compatibility, RAM-leak resolution, or performance improvement.
+
+### Fixed
+
+- The lighting `@ModifyArg` callback now matches the erased `Object` argument exposed by `ProcessorMailbox.tell(Object)` on Forge 40.3.12, preserving non-`Runnable` values and wrapping only the expected runnable callback.
+- The lighting executor helper is private so Mixin does not copy an implementation helper into the target class and reject the transformed class.
+- Added regression coverage for the erased callback descriptor and executor-helper visibility.
+
+### Verification boundary
+
+- Exact disposable Forge 40.3.12 startup reached `Done`; no Mixin fatal was observed during the bounded run.
+- Production deployment, restart, player-path validation, long-duration RAM testing, MSPT/chunk-generation measurement, and performance claims remain outside this candidate.
+
+## [1.0.5] - 2026-09-09
+
+Standalone Forge 1.18.2 C2ME-replacement candidate. Preserves the 1.0.4 memory-retention and YUNG's Bridges work, the 1.0.3 Radium Lithium-family mixin skip, the 1.0.2 ModernFix constructor-warmup skip, and the 1.0.1 Canary mid-tick deadlock skip.
+
+### Changed
+
+- Product identity now states that Threaded Horizons is a standalone Forge implementation intended to replace C2ME in the supported Minecraft 1.18.2 / Forge 40.3.12 lane. Mod ID remains `threadedhorizons`. No C2ME artifact is bundled.
+- Declared Forge dependency range is `[40.3.12,41)`.
+- Startup rejects a loaded `c2me` mod ID because overlapping mixins are not a supported combination.
+- Replacement audit documents every relevant C2ME 1.18.2 family: implemented families stay in source/tests; unsafe or unavailable families stay excluded with evidence.
+
+### Intentionally excluded (not revived)
+
+- `optimizeAsyncChunkRequest` remains retired. The inherited `CFUtil.join` / `mainThreadProcessor` path deadlocked `/tp`. No nonblocking replacement that avoids a server-thread join is proven here.
+- Global biome cache remains disabled, matching upstream C2ME 1.18.2 (`DO NOT USE in 1.18`, empty `populateBiomes` mixin). Sampler identity is not world identity.
+- Java incubator-vector acceleration remains absent on this Java 17 Forge toolchain.
+- Fabric companion mixins (BetterEnd, BetterNether, Charm, Terra, The Bumblezone) remain Forge-inapplicable.
+
+### Unchanged / unresolved
+
+- Radium, Canary, and Lithium still share the CompoundTag mixin-skip and mid-tick chunk-access skip from 1.0.3 / 1.0.1.
+- ModernFix still disables constructor-time asynchronous structure warmup (1.0.2).
+- YUNG's Bridges still forces FEATURES single-threading (1.0.4).
+- The Spark live-viewer protobuf / EventBus failure remains an unresolved classification. This candidate does not claim Threaded Horizons causes it and adds no Spark-specific code.
+- This is not a 1:1 C2ME parity claim, RAM-leak resolution, or production authorization.
+
+This is a controlled testing candidate. It supersedes 1.0.4 and requires fresh packaged runtime verification.
+
+## [1.0.4] - 2026-09-09
+
+Memory-retention and YUNG's Bridges compatibility successor. Preserves the 1.0.3 Radium Lithium-family mixin skip and the 1.0.2 ModernFix constructor-warmup skip.
+
+### Fixed
+
+- Worker ThreadLocal caches no longer preallocate oversized pools or grow without eviction. The feature-context pool is lazy and capacity-bounded (64 per worker). Ore `BitSet` reuse is LRU-capped. The thread-local biome cache is capped at 1024 entries with recency-aware eviction.
+- ForkJoin worldgen workers clear managed ThreadLocal caches on termination. Dedicated-server post-shutdown also drops the shutting-down thread's managed ThreadLocals after executor drain.
+- IO worker pending-NBT cache now honors configured `chunkDataCacheSoftLimit` / `chunkDataCacheLimit` through shared bound helpers. Explicit owner values inside the safe range are kept. Oversized persisted values are clamped (soft max 4096, hard max 8192) so legacy files cannot silently retain unbounded chunk NBT.
+- Config version 5 migrates those oversized IO cache keys while leaving in-range owner tuning unchanged.
+- When YUNG's Bridges (`yungsbridges`) is loaded, FEATURES generation is forced single-threaded because that mod writes `setBlock` into chunks other than the current generation chunk on Threaded Horizons workers. Other worldgen statuses stay parallel. Unrelated worldgen is not disabled.
+
+### Unchanged / unresolved
+
+- Radium, Canary, and Lithium still share the CompoundTag mixin-skip and mid-tick chunk-access skip from 1.0.3 / 1.0.1.
+- ModernFix still disables constructor-time asynchronous structure warmup (1.0.2).
+- The Spark live-viewer protobuf / EventBus failure remains an unresolved classification. This candidate does not claim Threaded Horizons causes it and adds no Spark-specific code.
+- C2ME is not in the target acceptance pack and is not claimed or runtime-tested here.
+
+This is a controlled testing candidate. It supersedes 1.0.3 and requires fresh packaged runtime verification. It does not claim universal compatibility or authorize production deployment.
+
+## [1.0.3] - 2026-09-08
+
+Compatibility successor for Forge Lithium-family performance mods.
+
+### Fixed
+
+- Prevented a startup `MixinTransformerError` when Radium 0.7.10 is present.
+- Threaded Horizons now recognizes Radium as a Lithium-family implementation and yields the overlapping `CompoundTag` allocation redirects to Radium.
+- Preserved the existing Lithium/Canary compatibility behavior for the same mixin family and mid-tick chunk-access path.
+- Added regression coverage for Radium family detection and the shared mixin skip boundary.
+
+This is a new controlled testing candidate. It supersedes 1.0.2 for packs containing Radium and requires fresh packaged runtime verification.
+
 ## [1.0.2] - 2026-09-07
 
 Compatibility successor for the Minecraft 1.18.2 Forge 40.3.11 pack lane.

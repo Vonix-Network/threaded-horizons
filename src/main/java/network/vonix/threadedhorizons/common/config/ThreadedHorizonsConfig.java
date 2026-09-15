@@ -16,7 +16,7 @@ public class ThreadedHorizonsConfig {
 
     static final Logger LOGGER = LoggerFactory.getLogger("Threaded Horizons Config");
 
-    private static final long CURRENT_CONFIG_VERSION = 4;
+    private static final long CURRENT_CONFIG_VERSION = 5;
 
     public static final IoSystemConfig ioSystemConfig;
     public static final ThreadedWorldGenConfig threadedWorldGenConfig;
@@ -100,6 +100,11 @@ public class ThreadedHorizonsConfig {
         // For testing purposes
         private static final boolean global_replaceImpl = Boolean.parseBoolean(System.getProperty("network.vonix.threadedhorizons.common.config.ioSystemConfig.replaceImpl", "false"));
 
+        public static final int DEFAULT_CHUNK_DATA_CACHE_SOFT_LIMIT = 1536;
+        public static final int DEFAULT_CHUNK_DATA_CACHE_HARD_LIMIT = 6144;
+        public static final int MAX_CHUNK_DATA_CACHE_SOFT_LIMIT = 4096;
+        public static final int MAX_CHUNK_DATA_CACHE_HARD_LIMIT = 8192;
+
         public final boolean async;
         public final boolean replaceImpl;
         public final int chunkDataCacheSoftLimit;
@@ -110,8 +115,10 @@ public class ThreadedHorizonsConfig {
             final ConfigUtils.ConfigScope configScope = new ConfigUtils.ConfigScope(config);
             this.async = ConfigUtils.getValue(configScope, "async", () -> true, "Whether to use async chunk loading & unloading", List.of("radon"), false, true);
             this.replaceImpl = ConfigUtils.getValue(configScope, "replaceImpl", () -> false || global_replaceImpl, "Whether to use optimized implementation of IO system", List.of("radon"), false, true);
-            int softLimit = ConfigUtils.getValue(configScope, "chunkDataCacheSoftLimit", () -> 1536, "Soft limit for io worker nbt cache", List.of(), 4096, true, ConfigUtils.CheckType.POSITIVE_VALUE_ONLY);
-            int hardLimit = ConfigUtils.getValue(configScope, "chunkDataCacheLimit", () -> 6144, "Hard limit for io worker nbt cache", List.of(), 8192, true, ConfigUtils.CheckType.POSITIVE_VALUE_ONLY);
+            int softLimit = ConfigUtils.getValue(configScope, "chunkDataCacheSoftLimit", () -> DEFAULT_CHUNK_DATA_CACHE_SOFT_LIMIT, "Soft limit for io worker nbt cache. Values above " + MAX_CHUNK_DATA_CACHE_SOFT_LIMIT + " are clamped.", List.of(), MAX_CHUNK_DATA_CACHE_SOFT_LIMIT, true, ConfigUtils.CheckType.POSITIVE_VALUE_ONLY);
+            int hardLimit = ConfigUtils.getValue(configScope, "chunkDataCacheLimit", () -> DEFAULT_CHUNK_DATA_CACHE_HARD_LIMIT, "Hard limit for io worker nbt cache. Values above " + MAX_CHUNK_DATA_CACHE_HARD_LIMIT + " are clamped.", List.of(), MAX_CHUNK_DATA_CACHE_HARD_LIMIT, true, ConfigUtils.CheckType.POSITIVE_VALUE_ONLY);
+            softLimit = clampCacheLimit(softLimit, MAX_CHUNK_DATA_CACHE_SOFT_LIMIT, "chunkDataCacheSoftLimit", config);
+            hardLimit = clampCacheLimit(hardLimit, MAX_CHUNK_DATA_CACHE_HARD_LIMIT, "chunkDataCacheLimit", config);
             if (hardLimit < softLimit) {
                 ThreadedHorizonsConfig.LOGGER.warn("chunkDataCacheLimit ({}) is below chunkDataCacheSoftLimit ({}), raising hard limit to the soft limit", hardLimit, softLimit);
                 hardLimit = softLimit;
@@ -123,11 +130,42 @@ public class ThreadedHorizonsConfig {
         }
 
         /**
+         * Honor explicit owner values inside the safe range. Oversized persisted
+         * numbers are written back so they cannot silently retain unbounded NBT.
+         */
+        public static int clampCacheLimit(int configured, int max, String key, CommentedConfig config) {
+            int clamped = Math.min(Math.max(1, configured), max);
+            if (clamped != configured) {
+                ThreadedHorizonsConfig.LOGGER.warn("{} ({}) exceeds the safe maximum ({}), clamping", key, configured, max);
+                if (config != null) {
+                    config.set(key, clamped);
+                }
+            }
+            return clamped;
+        }
+
+        /**
          * Target size for a hard-limit drain. Never above {@code hardLimit} and never 0,
          * so inverted limits still drain and {@code while (size >= 0)} cannot spin.
          */
         public static int nbtCacheDrainUntilSize(int softLimit, int hardLimit) {
             return Math.min(Math.max(1, hardLimit), Math.max(1, (int) (Math.max(1, softLimit) * 0.75)));
+        }
+
+        /**
+         * Extra mailbox stores to run when pending NBT is at or above the soft limit.
+         * Zero when the configured soft limit is not reached.
+         */
+        public static int extraSoftLimitWrites(int pendingSize, int softLimit) {
+            int limit = Math.max(1, softLimit);
+            if (pendingSize < limit) {
+                return 0;
+            }
+            return Math.max(1, (pendingSize - limit) / 16);
+        }
+
+        public static boolean exceedsHardLimit(int pendingSize, int hardLimit) {
+            return pendingSize >= Math.max(1, hardLimit);
         }
     }
 
@@ -141,15 +179,24 @@ public class ThreadedHorizonsConfig {
         public final boolean enabled;
         public final boolean allowThreadedFeatures;
         public final boolean reduceLockRadius;
+        /**
+         * Hard-disabled for this 1.18.2 Forge replacement. Upstream C2ME 1.18.2
+         * left the same key off with "DO NOT USE in 1.18"; the populateBiomes
+         * mixin is empty; sampler identity is not world identity. Re-enabling
+         * the unused {@code global_useGlobalBiomeCache} property does not apply
+         * mixins because this field stays false.
+         */
         public final boolean useGlobalBiomeCache = false;
 
         public ThreadedWorldGenConfig(CommentedConfig config) {
             Preconditions.checkNotNull(config, "threadedWorldGen config is not present");
             final ConfigUtils.ConfigScope configScope = new ConfigUtils.ConfigScope(config);
             this.enabled = ConfigUtils.getValue(configScope, "enabled", () -> getDefaultGlobalExecutorParallelism() >= 3 || global_enabled, "Whether to enable this feature", List.of(), false, true);
-            this.allowThreadedFeatures = ConfigUtils.getValue(configScope, "allowThreadedFeatures", () -> true, "Whether to allow feature generation (world decorations like trees, ores and etc.) run in parallel \n (may cause incompatibility with other mods)", List.of(), null, true);
+            this.allowThreadedFeatures = ConfigUtils.getValue(configScope, "allowThreadedFeatures", () -> true, "Whether to allow feature generation (world decorations like trees, ores and etc.) run in parallel \n Forced single-threaded when YUNG's Bridges (yungsbridges) is loaded because it writes blocks outside the current generation chunk \n (may cause incompatibility with other mods)", List.of(), null, true);
             this.reduceLockRadius = ConfigUtils.getValue(configScope, "reduceLockRadius", () -> true, "Whether to allow reducing lock radius \\n (write/lock ownership only; WorldGenRegion reads stay vanilla firstPos/lastPos)", List.of(), null, true);
-//            this.useGlobalBiomeCache = ConfigUtils.getValue(configScope, "useGlobalBiomeCache", () -> false, "(DO NOT USE in 1.18) \n Whether to enable global BiomeCache to accelerate worldgen \n This increases memory allocation ", List.of(), false, true);
+            // useGlobalBiomeCache stays hardcoded false. Upstream 1.18.2 C2ME commented
+            // the config key with "(DO NOT USE in 1.18)". Do not restore ConfigUtils.getValue
+            // for this key on this Forge target.
             configScope.removeUnusedKeys();
         }
     }

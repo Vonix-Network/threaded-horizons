@@ -20,4 +20,4 @@ Threaded Horizons is an independent Minecraft 1.18.2 Forge derivative of publicl
 
 The original MIT license texts are preserved in this distribution. This Forge 1.18.2 release relocates runtime packages, resource IDs, and metadata to the Threaded Horizons identity. Upstream names appear in this notice and other explicit provenance documentation only.
 
-The 1.0.0 artifact is distributed through the public Vonix GitHub repository at https://github.com/Vonix-Network/threaded-horizons. No CurseForge project or downstream platform publication is claimed.
+The public Vonix GitHub repository at https://github.com/Vonix-Network/threaded-horizons distributes Threaded Horizons artifacts. The 1.0.7 candidate is a standalone Forge 1.18.2 C2ME replacement with mod ID `threadedhorizons`; it does not bundle a C2ME artifact. No CurseForge project or downstream platform publication is claimed.

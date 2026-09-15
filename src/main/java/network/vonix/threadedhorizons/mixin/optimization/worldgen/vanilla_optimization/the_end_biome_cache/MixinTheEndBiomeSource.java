@@ -1,6 +1,7 @@
 package network.vonix.threadedhorizons.mixin.optimization.worldgen.vanilla_optimization.the_end_biome_cache;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
+import network.vonix.threadedhorizons.common.lifecycle.WorkerThreadLocals;
 import network.vonix.threadedhorizons.common.optimization.worldgen.EndBiomeDecision;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.levelgen.synth.SimplexNoise;
@@ -55,7 +56,7 @@ public abstract class MixinTheEndBiomeSource {
         return this.barrens;
     }
 
-    private final ThreadLocal<Long2ObjectLinkedOpenHashMap<Holder<Biome>>> cache = ThreadLocal.withInitial(Long2ObjectLinkedOpenHashMap::new);
+    private final ThreadLocal<Long2ObjectLinkedOpenHashMap<Holder<Biome>>> cache = WorkerThreadLocals.create(Long2ObjectLinkedOpenHashMap::new);
     private final int cacheCapacity = 1024;
 
     /**

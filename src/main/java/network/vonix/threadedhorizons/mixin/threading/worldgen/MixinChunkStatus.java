@@ -65,7 +65,9 @@ public abstract class MixinChunkStatus implements IChunkStatus {
         if ((Object) this == ChunkStatus.LIGHT) {
             this.reducedTaskRadius = 1;
         }
-        System.out.printf("%s task radius: %d -> %d%n", this, this.range, this.reducedTaskRadius);
+        if (Boolean.getBoolean("network.vonix.threadedhorizons.debug.logTaskRadius")) {
+            System.out.printf("%s task radius: %d -> %d%n", this, this.range, this.reducedTaskRadius);
+        }
     }
 
     @Override

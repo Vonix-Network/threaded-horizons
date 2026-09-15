@@ -37,8 +37,17 @@ public class SchedulerThread extends Thread implements Executor {
 
     /** Bounded lock admissions per scheduler cycle so raw tasks cannot starve. */
     static final int LOCK_ADMISSION_BATCH = 32;
+    static final int MAX_RAW_TASKS = 65_536;
+    /** Absolute fail-closed cap. Live defaults are derived from the pipeline limit. */
+    static final int MAX_PENDING_LOCKS = 65_536;
+    static final int MAX_ADMITTED_LOCKS = 65_536;
+    static final int MAX_PIPELINE_WAITERS = 65_536;
+
+    private final int maxPendingLocks;
+    private final int maxAdmittedLocks;
 
     private final ConcurrentLinkedQueue<Runnable> rawTasks = new ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.atomic.AtomicInteger rawTaskCount = new java.util.concurrent.atomic.AtomicInteger();
     private final PriorityBlockingQueue<SchedulingAsyncCombinedLock<?>> pendingLocks = new PriorityBlockingQueue<>();
     private final Set<SchedulingAsyncCombinedLock<?>> admittedLocks = ConcurrentHashMap.newKeySet();
 
@@ -57,6 +66,22 @@ public class SchedulerThread extends Thread implements Executor {
     private final AtomicBoolean stopping = new AtomicBoolean(false);
 
     private SchedulerThread() {
+        this(
+                lockAdmissionCeiling(computePipelineLimit(
+                        ThreadedHorizonsConfig.globalExecutorParallelism,
+                        Runtime.getRuntime().maxMemory())),
+                lockAdmissionCeiling(computePipelineLimit(
+                        ThreadedHorizonsConfig.globalExecutorParallelism,
+                        Runtime.getRuntime().maxMemory()))
+        );
+    }
+
+    SchedulerThread(int maxPendingLocks, int maxAdmittedLocks) {
+        if (maxPendingLocks <= 0 || maxAdmittedLocks <= 0) {
+            throw new IllegalArgumentException("scheduler lock limits must be positive");
+        }
+        this.maxPendingLocks = maxPendingLocks;
+        this.maxAdmittedLocks = maxAdmittedLocks;
         this.setName("Threaded Horizons scheduler");
         this.setDaemon(false);
         this.start();
@@ -109,7 +134,7 @@ public class SchedulerThread extends Thread implements Executor {
             }
 
             // Always give raw tasks a chance, even when lock work occurred.
-            Runnable runnable = rawTasks.poll();
+            Runnable runnable = pollRawTask();
             if (runnable != null) {
                 didWork = true;
                 try {
@@ -148,8 +173,15 @@ public class SchedulerThread extends Thread implements Executor {
                 failLock(lock);
                 return false;
             }
-            this.admittedLocks.add(lock);
-            lock.getFuture().whenComplete((result, throwable) -> this.admittedLocks.remove(lock));
+            if (this.pendingLocks.size() >= this.maxPendingLocks
+                    || (!this.admittedLocks.contains(lock) && this.admittedLocks.size() >= this.maxAdmittedLocks)) {
+                network.vonix.threadedhorizons.common.diagnostics.RuntimeDiagnostics.recordRejected();
+                failLock(lock);
+                return false;
+            }
+            if (this.admittedLocks.add(lock)) {
+                lock.getFuture().whenComplete((result, throwable) -> this.admittedLocks.remove(lock));
+            }
             this.pendingLocks.add(lock);
         } finally {
             this.lifecycleLock.unlock();
@@ -225,6 +257,10 @@ public class SchedulerThread extends Thread implements Executor {
         return this.pendingLocks.size();
     }
 
+    int getAdmittedLockCount() {
+        return this.admittedLocks.size();
+    }
+
     /**
      * Maximum unique chunks allowed in the threaded-worldgen pipeline at once.
      * Scales with heap so {@code -Xmx2G} cannot retain a full spawn-wave of
@@ -238,6 +274,16 @@ public class SchedulerThread extends Thread implements Executor {
         int byHeap = (int) Math.max(8L, maxMemoryBytes / (64L * 1024L * 1024L));
         int byParallel = Math.max(8, workers * 8);
         return Math.min(64, Math.max(byHeap, byParallel));
+    }
+
+    /**
+     * Pending/admitted lock ceilings follow the pipeline, not the 65,536 absolute
+     * cap. Each in-pipeline chunk holds at most one combined lock, so a small
+     * multiple of the pipeline is enough for waiters and retries.
+     */
+    public static int lockAdmissionCeiling(int pipelineLimit) {
+        int pipeline = Math.max(1, pipelineLimit);
+        return Math.min(MAX_PENDING_LOCKS, Math.max(256, pipeline * 16));
     }
 
     public int getPipelineLimit() {
@@ -323,6 +369,9 @@ public class SchedulerThread extends Thread implements Executor {
                     || this.pipelineChunks.size() < this.pipelineLimit) {
                 this.pipelineChunks.add(key);
                 return CompletableFuture.completedFuture(null);
+            }
+            if (this.pipelineWaiters.size() >= MAX_PIPELINE_WAITERS) {
+                return CompletableFuture.failedFuture(new IllegalStateException("pipeline waiter queue is full"));
             }
             PipelineAdmission waiter = new PipelineAdmission(pos);
             this.pipelineWaiters.addLast(waiter);
@@ -423,7 +472,7 @@ public class SchedulerThread extends Thread implements Executor {
 
     private void drainRawTasks() {
         Runnable runnable;
-        while ((runnable = this.rawTasks.poll()) != null) {
+        while ((runnable = pollRawTask()) != null) {
             try {
                 runnable.run();
             } catch (Throwable t) {
@@ -586,7 +635,7 @@ public class SchedulerThread extends Thread implements Executor {
     }
 
     public int getRawTaskCount() {
-        return this.rawTasks.size();
+        return this.rawTaskCount.get();
     }
 
     public int getAvailablePermits() {
@@ -601,10 +650,23 @@ public class SchedulerThread extends Thread implements Executor {
                 network.vonix.threadedhorizons.common.diagnostics.RuntimeDiagnostics.recordRejected();
                 throw new IllegalStateException("scheduler is stopping");
             }
+            if (this.rawTaskCount.get() >= MAX_RAW_TASKS) {
+                network.vonix.threadedhorizons.common.diagnostics.RuntimeDiagnostics.recordRejected();
+                throw new IllegalStateException("scheduler raw-task queue is full");
+            }
             this.rawTasks.add(command);
+            this.rawTaskCount.incrementAndGet();
         } finally {
             this.lifecycleLock.unlock();
         }
         LockSupport.unpark(this);
+    }
+
+    private Runnable pollRawTask() {
+        Runnable runnable = this.rawTasks.poll();
+        if (runnable != null) {
+            this.rawTaskCount.decrementAndGet();
+        }
+        return runnable;
     }
 }

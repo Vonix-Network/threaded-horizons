@@ -11,15 +11,17 @@ displayName="Threaded Horizons"
 logoFile="threadedhorizons.png"
 authors="Vonix"
 description='''
-A Minecraft 1.18.2 Forge mod that parallelizes chunk generation, chunk I/O, lighting, and scheduling, and includes the related thread-safety, failsafe, and client option work from its upstream sources.
+A standalone Minecraft 1.18.2 Forge implementation intended to replace C2ME in this Forge lane. It parallelizes chunk generation, chunk I/O, lighting, and scheduling, and includes related thread-safety, failsafe, and client option work.
 
-This is an independent derivative project. License and exact source attribution are in LICENSE and NOTICE.md.
+This project uses mod ID threadedhorizons and does not bundle a C2ME artifact. Do not install it alongside a C2ME-branded artifact: overlapping mixins are not a supported combination.
+
+License and exact source attribution are in LICENSE and NOTICE.md.
 '''
 
 [[dependencies.threadedhorizons]]
 modId="forge"
 mandatory=true
-versionRange="[40.3.11,41)"
+versionRange="[40.3.12,41)"
 ordering="NONE"
 side="BOTH"
 

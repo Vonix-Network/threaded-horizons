@@ -1,6 +1,7 @@
 package network.vonix.threadedhorizons.common.chunkio;
 
 import network.vonix.threadedhorizons.common.GlobalExecutors;
+import network.vonix.threadedhorizons.common.diagnostics.RuntimeDiagnostics;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.StreamTagVisitor;
 import net.minecraft.world.level.ChunkPos;
@@ -37,6 +38,8 @@ public class ThreadedHorizonsStorageThread extends Thread {
     private static final Logger LOGGER = LoggerFactory.getLogger("Threaded Horizons Storage");
     private static final AtomicLong SERIAL = new AtomicLong(0);
     private static final int MAX_AUTO_RETRIES = 5;
+    private static final int MAX_DRAIN_SPINS = 1_000_000;
+    static final int MAX_PENDING_ADMISSIONS = 65_536;
 
     private final RegionBackend backend;
     private final Executor serializeExecutor;
@@ -100,6 +103,10 @@ public class ThreadedHorizonsStorageThread extends Thread {
                 future.completeExceptionally(new StorageClosedException("storage is closed"));
                 return future;
             }
+            if (admissionLimitReached()) {
+                future.completeExceptionally(admissionLimitFailure());
+                return future;
+            }
             this.pendingAccepted.incrementAndGet();
             this.pendingReads.add(read);
         }
@@ -108,11 +115,27 @@ public class ThreadedHorizonsStorageThread extends Thread {
     }
 
     public CompletableFuture<Void> store(long pos, @Nullable CompoundTag nbt) {
-        CompoundTag snapshot = nbt == null ? null : nbt.copy();
+        return store(pos, nbt, false);
+    }
+
+    /**
+     * Takes ownership of {@code nbt} without copying it. The caller must not
+     * mutate the tag after this returns. {@link #store(long, CompoundTag)}
+     * remains the isolating public contract.
+     */
+    public CompletableFuture<Void> storeOwned(long pos, @Nullable CompoundTag nbt) {
+        return store(pos, nbt, true);
+    }
+
+    private CompletableFuture<Void> store(long pos, @Nullable CompoundTag nbt, boolean takeOwnership) {
+        CompoundTag snapshot = nbt == null ? null : (takeOwnership ? nbt : nbt.copy());
         PositionedRequest request;
         synchronized (this.admissionLock) {
             if (admissionClosed()) {
                 return CompletableFuture.failedFuture(new StorageClosedException("reject after close"));
+            }
+            if (admissionLimitReached()) {
+                return CompletableFuture.failedFuture(admissionLimitFailure());
             }
             long generation = this.nextGeneration.incrementAndGet();
             request = new PositionedRequest(
@@ -136,6 +159,10 @@ public class ThreadedHorizonsStorageThread extends Thread {
         synchronized (this.admissionLock) {
             if (admissionClosed()) {
                 future.completeExceptionally(new StorageClosedException("reject after close"));
+                return future;
+            }
+            if (admissionLimitReached()) {
+                future.completeExceptionally(admissionLimitFailure());
                 return future;
             }
             this.pendingFlushes.incrementAndGet();
@@ -217,7 +244,10 @@ public class ThreadedHorizonsStorageThread extends Thread {
             if (this.hooks.beforeSerialize != null) {
                 this.hooks.beforeSerialize.accept(request.snapshot);
             }
-            request.serialized = request.snapshot.copy();
+            // Snapshot is already isolated from the caller. NbtIo.write does not
+            // mutate the tag, and cache reads return a copy. A second deep copy
+            // here is pure garbage.
+            request.serialized = request.snapshot;
             if (this.hooks.afterSerialize != null) {
                 this.hooks.afterSerialize.accept(request.generation);
             }
@@ -434,14 +464,27 @@ public class ThreadedHorizonsStorageThread extends Thread {
             drainMailbox();
             drainReads();
             pumpCommits();
-            if (++spins > 1_000_000) {
-                break;
+            if (++spins > MAX_DRAIN_SPINS) {
+                StorageFailureException failure = new StorageFailureException(
+                        StorageFailureClass.PERMANENT,
+                        "flush reached its bounded drain limit with outstanding work",
+                        null);
+                recordFailure(failure);
+                throw new IllegalStateException(failure);
             }
             LockSupport.parkNanos(100_000L);
         }
         if (hasUndurableNewest() && this.durabilityFailure == null) {
             requeueUndurableNewest();
             pumpCommits();
+        }
+        if (hasOutstandingDurabilityWork()) {
+            StorageFailureException failure = new StorageFailureException(
+                    StorageFailureClass.RETRYABLE,
+                    "flush completed with outstanding undurable storage work",
+                    this.durabilityFailure);
+            recordFailure(failure);
+            throw new IllegalStateException(failure);
         }
     }
 
@@ -465,6 +508,15 @@ public class ThreadedHorizonsStorageThread extends Thread {
                 slot.commitQueue.addLast(newest);
             }
         }
+    }
+
+    private boolean hasOutstandingDurabilityWork() {
+        return this.pendingAccepted.get() > 0
+                || hasInFlight()
+                || hasQueuedCommits()
+                || !this.pendingReads.isEmpty()
+                || !this.mailbox.isEmpty()
+                || hasUndurableNewest();
     }
 
     private boolean hasInFlight() {
@@ -545,6 +597,22 @@ public class ThreadedHorizonsStorageThread extends Thread {
 
     private boolean admissionClosed() {
         return this.closing.get() || this.closed.get();
+    }
+
+    private boolean admissionLimitReached() {
+        long admitted = (long) this.pendingAccepted.get() + this.pendingFlushes.get();
+        if (admitted < MAX_PENDING_ADMISSIONS) {
+            return false;
+        }
+        RuntimeDiagnostics.recordRejected();
+        return true;
+    }
+
+    private StorageFailureException admissionLimitFailure() {
+        return new StorageFailureException(
+                StorageFailureClass.RETRYABLE,
+                "storage admission queue is full",
+                null);
     }
 
     private boolean isIdleForClose() {

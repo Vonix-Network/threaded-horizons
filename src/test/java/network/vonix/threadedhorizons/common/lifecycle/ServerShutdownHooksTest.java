@@ -4,6 +4,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -59,6 +61,7 @@ class ServerShutdownHooksTest {
         ServerShutdownHooks.runPostShutdown(1, TimeUnit.SECONDS);
         assertEquals(List.of("fenceScheduler", "awaitScheduler", "shutdownGlobalExecutors", "shutdownLogging"), order);
         assertEquals(0, timeouts.get());
+        assertTrue(order.indexOf("shutdownGlobalExecutors") < order.indexOf("shutdownLogging"));
     }
 
     @Test
@@ -127,5 +130,16 @@ class ServerShutdownHooksTest {
         assertTrue(order.indexOf("awaitScheduler-enter") < order.indexOf("shutdownGlobalExecutors"));
         assertTrue(order.indexOf("shutdownGlobalExecutors") < order.indexOf("shutdownLogging"));
         assertTrue(order.contains("awaitScheduler-exit"));
+    }
+
+    @Test
+    void postShutdownClearsWorkerThreadLocalsAfterExecutorDrain() throws Exception {
+        String body = Files.readString(Path.of(
+                "src/main/java/network/vonix/threadedhorizons/common/lifecycle/ServerShutdownHooks.java"));
+        int executors = body.indexOf("hooks.shutdownGlobalExecutors");
+        int locals = body.indexOf("WorkerThreadLocals.clearCurrentThread()");
+        int logging = body.indexOf("hooks.shutdownLogging()");
+        assertTrue(executors >= 0 && locals > executors && logging > locals,
+                "worker ThreadLocals must clear after executor drain and before logging shutdown");
     }
 }

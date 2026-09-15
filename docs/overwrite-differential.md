@@ -1,6 +1,6 @@
-# Official Forge 40.3.11 overwrite differential
+# Official Forge 40.3.12 overwrite differential
 
-JUnit tests run against mapped Forge `1.18.2-40.3.11` classes. Mixins are not applied in that JVM, so retained same-semantics overwrites are proven by executing the production helper the mixin calls, or by matching official constructors and public methods.
+JUnit tests run against mapped Forge `1.18.2-40.3.12` classes. Mixins are not applied in that JVM, so retained same-semantics overwrites are proven by executing the production helper the mixin calls, or by matching official constructors and public methods.
 
 `OfficialOverwriteDifferentialTest` is the executed suite.
 

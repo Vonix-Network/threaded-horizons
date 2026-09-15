@@ -1,6 +1,7 @@
 package network.vonix.threadedhorizons.common.notickvd;
 
 import network.vonix.threadedhorizons.common.threading.scheduler.SchedulerThread;
+import network.vonix.threadedhorizons.common.diagnostics.RuntimeDiagnostics;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
@@ -15,16 +16,19 @@ import org.threadly.concurrent.NoThreadScheduler;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.UUID;
 
 public class NoTickSystem {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Threaded Horizons NoTick");
+    static final int MAX_PENDING_ACTIONS = 65_536;
 
     private final PlayerNoTickDistanceMap playerNoTickDistanceMap;
     private final NormalTicketDistanceMap normalTicketDistanceMap;
     private final DistanceManager chunkTicketManager;
 
     private final ConcurrentLinkedQueue<Runnable> pendingActions = new ConcurrentLinkedQueue<>();
+    private final AtomicInteger pendingActionCount = new AtomicInteger();
 
     final NoThreadScheduler noThreadScheduler = new NoThreadScheduler();
 
@@ -56,23 +60,31 @@ public class NoTickSystem {
     }
 
     public void onTicketAdded(long position, Ticket<?> ticket) {
-        this.pendingActions.add(() -> this.normalTicketDistanceMap.addTicket(position, ticket));
+        enqueueOrApplySynchronously(() -> this.normalTicketDistanceMap.addTicket(position, ticket), "ticket add");
     }
 
     public void onTicketRemoved(long position, Ticket<?> ticket) {
-        this.pendingActions.add(() -> this.normalTicketDistanceMap.removeTicket(position, ticket));
+        enqueueOrApplySynchronously(() -> this.normalTicketDistanceMap.removeTicket(position, ticket), "ticket remove");
     }
 
     public void addPlayerSource(ChunkPos chunkPos) {
-        this.pendingActions.add(() -> this.playerNoTickDistanceMap.addSource(chunkPos));
+        enqueueOrApplySynchronously(() -> this.playerNoTickDistanceMap.addSource(chunkPos), "player source add");
     }
 
     public void removePlayerSource(ChunkPos chunkPos) {
-        this.pendingActions.add(() -> this.playerNoTickDistanceMap.removeSource(chunkPos));
+        enqueueOrApplySynchronously(() -> this.playerNoTickDistanceMap.removeSource(chunkPos), "player source remove");
+    }
+
+    public void addPlayerSource(UUID playerId, ChunkPos chunkPos) {
+        enqueueOrApplySynchronously(() -> this.playerNoTickDistanceMap.addSource(playerId, chunkPos), "player source add");
+    }
+
+    public void removePlayerSource(UUID playerId, ChunkPos chunkPos) {
+        enqueueOrApplySynchronously(() -> this.playerNoTickDistanceMap.removeSource(playerId, chunkPos), "player source remove");
     }
 
     public void setNoTickViewDistance(int viewDistance) {
-        this.pendingActions.add(() -> this.playerNoTickDistanceMap.setViewDistance(viewDistance));
+        enqueueOrApplySynchronously(() -> this.playerNoTickDistanceMap.setViewDistance(viewDistance), "view distance");
     }
 
     public void tick() {
@@ -103,7 +115,7 @@ public class NoTickSystem {
                             LOGGER.error("No-tick after-cycle hook failed", t);
                         }
                     }
-                    if (needsAnother || !this.pendingActions.isEmpty()) {
+                    if (needsAnother || this.pendingActionCount.get() > 0) {
                         scheduleTick();
                     }
                 });
@@ -121,14 +133,7 @@ public class NoTickSystem {
      * @return true when another cycle should run within the same server tick
      */
     private boolean runOneCycle() {
-        Runnable runnable;
-        while ((runnable = this.pendingActions.poll()) != null) {
-            try {
-                runnable.run();
-            } catch (Throwable t) {
-                LOGGER.error("No-tick pending action failed", t);
-            }
-        }
+        drainPendingActions();
 
         final boolean hasNormalTicketUpdates = this.normalTicketDistanceMap.update();
         final boolean hasNoTickDistanceUpdates = this.playerNoTickDistanceMap.update();
@@ -164,11 +169,11 @@ public class NoTickSystem {
     }
 
     public void runPurge(long age) {
-        this.pendingActions.add(() -> {
+        enqueueOrApplySynchronously(() -> {
             this.normalTicketDistanceMap.purge(age);
             // Managed no-tick ticket admission/removal is applied in scheduleTick
             // via runPendingTicketUpdates so the snapshot rebuild always observes it.
-        });
+        }, "ticket purge");
     }
 
     public LongSet getNoTickOnlyChunksSnapshot() {
@@ -202,7 +207,7 @@ public class NoTickSystem {
     }
 
     void enqueuePendingActionForTest(Runnable action) {
-        this.pendingActions.add(action);
+        enqueueAction(action);
     }
 
     /**
@@ -213,7 +218,7 @@ public class NoTickSystem {
         this.ticketUpdateBudgetRemaining.set(PlayerNoTickDistanceMap.maxTicketUpdatesPerTick());
         boolean rebuilt = false;
         Runnable runnable;
-        while ((runnable = this.pendingActions.poll()) != null) {
+        while ((runnable = pollPendingAction()) != null) {
             runnable.run();
         }
         final boolean hasNormalTicketUpdates = this.normalTicketDistanceMap.update();
@@ -247,11 +252,83 @@ public class NoTickSystem {
             if (cycles > 10_000) {
                 throw new IllegalStateException("server-tick drain did not converge");
             }
-        } while (again || !this.pendingActions.isEmpty());
+        } while (again || this.pendingActionCount.get() > 0);
         return cycles;
     }
 
     void publishSnapshotForTest() {
         publishSnapshot();
+    }
+
+    int pendingActionCountForTest() {
+        return this.pendingActionCount.get();
+    }
+
+    private boolean enqueueAction(Runnable action) {
+        if (action == null) {
+            throw new NullPointerException("action");
+        }
+        while (true) {
+            int current = this.pendingActionCount.get();
+            if (current >= MAX_PENDING_ACTIONS) {
+                RuntimeDiagnostics.recordRejected();
+                LOGGER.warn("No-tick pending action queue full; applying critical action synchronously");
+                return false;
+            }
+            if (this.pendingActionCount.compareAndSet(current, current + 1)) {
+                break;
+            }
+        }
+        try {
+            this.pendingActions.add(action);
+            return true;
+        } catch (Throwable throwable) {
+            this.pendingActionCount.decrementAndGet();
+            LOGGER.error("No-tick action admission failed", throwable);
+            return false;
+        }
+    }
+
+    private void enqueueOrApplySynchronously(Runnable action, String description) {
+        if (!enqueueAction(action)) {
+            applyRejectedActionSynchronously(action, description);
+        }
+    }
+
+    private void drainPendingActions() {
+        Runnable runnable;
+        while ((runnable = pollPendingAction()) != null) {
+            try {
+                runnable.run();
+            } catch (Throwable throwable) {
+                LOGGER.error("No-tick pending action failed", throwable);
+            }
+        }
+    }
+
+    private void applyRejectedActionSynchronously(Runnable action, String description) {
+        try {
+            drainPendingActions();
+            action.run();
+            this.normalTicketDistanceMap.update();
+            this.playerNoTickDistanceMap.update();
+            final int budget = Math.max(0, this.ticketUpdateBudgetRemaining.get());
+            final int effectiveApplied = this.playerNoTickDistanceMap.runPendingTicketUpdates(budget);
+            if (effectiveApplied > 0) {
+                this.ticketUpdateBudgetRemaining.addAndGet(-effectiveApplied);
+            }
+            publishSnapshot();
+            LOGGER.warn("Applied rejected {} synchronously to preserve no-tick snapshot consistency", description);
+        } catch (Throwable throwable) {
+            LOGGER.error("Rejected {} could not be applied", description, throwable);
+        }
+    }
+
+    private Runnable pollPendingAction() {
+        Runnable action = this.pendingActions.poll();
+        if (action != null) {
+            this.pendingActionCount.decrementAndGet();
+        }
+        return action;
     }
 }

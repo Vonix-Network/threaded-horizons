@@ -4,7 +4,6 @@ import com.google.common.base.Preconditions;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.mojang.datafixers.util.Function4;
 import net.minecraft.core.IdMap;
 import net.minecraft.core.SectionPos;
@@ -13,20 +12,19 @@ import net.minecraft.core.Holder;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.core.QuartPos;
 import net.minecraft.world.level.biome.Climate;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.threadly.concurrent.UnfairExecutor;
 
 /**
  * Per-sampler section biome cache. Outer keys are sampler <em>object identity</em>
  * (not Climate.Sampler structural equality) so two equal-but-distinct sampler
  * instances never share entries. The outer sampler cache is bounded; eviction
  * may drop cached data but never merges sampler namespaces.
+ *
+ * <p>This type is retained for isolation tests and for a possible later enable,
+ * but {@code useGlobalBiomeCache} stays false on this 1.18.2 Forge target.
+ * Upstream C2ME 1.18.2 declared the same key unsafe. The unused biome-preload
+ * executor from that tree is not started here.
  */
 public class MultiBiomeCache {
-
-    public static final UnfairExecutor EXECUTOR = new UnfairExecutor(2, new ThreadFactoryBuilder().setNameFormat("Threaded Horizons biomes #%d").setDaemon(true).setPriority(Thread.NORM_PRIORITY - 1).build());
-    private static final Logger LOGGER = LoggerFactory.getLogger("Threaded Horizons Biome Cache");
 
     /** Bounded number of distinct Climate.Sampler identity caches retained at once. */
     public static final int MAX_SAMPLER_CACHES = 64;

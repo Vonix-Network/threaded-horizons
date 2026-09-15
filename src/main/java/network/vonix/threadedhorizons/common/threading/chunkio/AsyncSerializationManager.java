@@ -16,21 +16,20 @@ import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import network.vonix.threadedhorizons.common.lifecycle.WorkerThreadLocals;
+
 import java.util.ArrayDeque;
-import java.util.Arrays;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 public class AsyncSerializationManager {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Threaded Horizons Async Serialization Manager");
 
-    private static final ThreadLocal<ArrayDeque<Scope>> scopeHolder = ThreadLocal.withInitial(ArrayDeque::new);
+    private static final ThreadLocal<ArrayDeque<Scope>> scopeHolder = WorkerThreadLocals.create(ArrayDeque::new);
 
     public static void push(Scope scope) {
         scopeHolder.get().push(scope);
@@ -60,27 +59,40 @@ public class AsyncSerializationManager {
         public final Map<BlockPos, CompoundTag> pendingBlockEntityNbtsPacked;
         private final AtomicBoolean isOpen = new AtomicBoolean(false);
 
-        @SuppressWarnings("unchecked")
         public Scope(ChunkAccess chunk, ServerLevel world) {
             this.pos = chunk.getPos();
-            this.lighting = Arrays.stream(LightLayer.values()).map(type -> new CachedLightingView(world.getLightEngine(), chunk.getPos(), type)).collect(Collectors.toMap(CachedLightingView::getLightType, Function.identity()));
-            this.blockEntityPositions = chunk.getBlockEntitiesPos();
-            this.blockEntities = this.blockEntityPositions.stream().map(chunk::getBlockEntity).filter(Objects::nonNull).filter(blockEntity -> !blockEntity.isRemoved()).collect(Collectors.toMap(BlockEntity::getBlockPos, Function.identity()));
-            {
-                Map<BlockPos, CompoundTag> pendingBlockEntitiesNbtPacked = new Object2ObjectOpenHashMap<>();
-                for (BlockPos blockPos : this.blockEntityPositions) {
-                    final CompoundTag blockEntityNbt = chunk.getBlockEntityNbt(blockPos);
-                    if (blockEntityNbt == null) continue;
-                    final CompoundTag copy = blockEntityNbt.copy();
-                    copy.putBoolean("keepPacked", true);
-                    pendingBlockEntitiesNbtPacked.put(blockPos, copy);
-                }
-                this.pendingBlockEntityNbtsPacked = pendingBlockEntitiesNbtPacked;
+            EnumMap<LightLayer, LayerLightEventListener> lightingViews = new EnumMap<>(LightLayer.class);
+            LevelLightEngine lightEngine = world.getLightEngine();
+            for (LightLayer type : LightLayer.values()) {
+                lightingViews.put(type, new CachedLightingView(lightEngine, chunk.getPos(), type));
             }
-            final HashSet<BlockPos> blockPos = new HashSet<>(this.blockEntities.keySet());
-            blockPos.addAll(this.pendingBlockEntityNbtsPacked.keySet());
-            if (this.blockEntityPositions.size() != blockPos.size()) {
-                LOGGER.warn("Block entities size mismatch! expected {} but got {}", this.blockEntityPositions.size(), blockPos.size());
+            this.lighting = lightingViews;
+            this.blockEntityPositions = new HashSet<>(chunk.getBlockEntitiesPos());
+            Map<BlockPos, BlockEntity> entities = new Object2ObjectOpenHashMap<>();
+            for (BlockPos blockPos : this.blockEntityPositions) {
+                BlockEntity blockEntity = chunk.getBlockEntity(blockPos);
+                if (blockEntity != null && !blockEntity.isRemoved()) {
+                    entities.put(blockEntity.getBlockPos(), blockEntity);
+                }
+            }
+            this.blockEntities = entities;
+            Map<BlockPos, CompoundTag> pendingBlockEntitiesNbtPacked = new Object2ObjectOpenHashMap<>();
+            for (BlockPos blockPos : this.blockEntityPositions) {
+                final CompoundTag blockEntityNbt = chunk.getBlockEntityNbt(blockPos);
+                if (blockEntityNbt == null) continue;
+                final CompoundTag copy = blockEntityNbt.copy();
+                copy.putBoolean("keepPacked", true);
+                pendingBlockEntitiesNbtPacked.put(blockPos, copy);
+            }
+            this.pendingBlockEntityNbtsPacked = pendingBlockEntitiesNbtPacked;
+            int packedOnly = 0;
+            for (BlockPos blockPos : this.pendingBlockEntityNbtsPacked.keySet()) {
+                if (!this.blockEntities.containsKey(blockPos)) {
+                    packedOnly++;
+                }
+            }
+            if (this.blockEntityPositions.size() != this.blockEntities.size() + packedOnly) {
+                LOGGER.warn("Block entities size mismatch! expected {} but got {}", this.blockEntityPositions.size(), this.blockEntities.size() + packedOnly);
             }
         }
 
@@ -93,15 +105,22 @@ public class AsyncSerializationManager {
             private static final DataLayer EMPTY = new DataLayer();
 
             private final LightLayer lightType;
-            private final Map<SectionPos, DataLayer> cachedData = new Object2ObjectOpenHashMap<>();
+            private final int chunkX;
+            private final int chunkZ;
+            private final int minSection;
+            private final LayerLightEventListener live;
+            private final DataLayer[] cached;
+            private final byte[] state;
 
             CachedLightingView(LevelLightEngine provider, ChunkPos pos, LightLayer type) {
                 this.lightType = type;
-                for (int i = provider.getMinLightSection(); i < provider.getMaxLightSection(); i++) {
-                    final SectionPos sectionPos = SectionPos.of(pos, i);
-                    DataLayer lighting = provider.getLayerListener(type).getDataLayerData(sectionPos);
-                    cachedData.put(sectionPos, lighting != null ? lighting.copy() : null);
-                }
+                this.chunkX = pos.x;
+                this.chunkZ = pos.z;
+                this.minSection = provider.getMinLightSection();
+                int count = Math.max(0, provider.getMaxLightSection() - this.minSection);
+                this.live = provider.getLayerListener(type);
+                this.cached = new DataLayer[count];
+                this.state = new byte[count];
             }
 
             public LightLayer getLightType() {
@@ -137,8 +156,29 @@ public class AsyncSerializationManager {
             @NotNull
             @Override
             public DataLayer getDataLayerData(SectionPos pos) {
-                DataLayer layer = cachedData.getOrDefault(pos, EMPTY);
-                return layer == null ? EMPTY : layer;
+                if (pos.getX() != this.chunkX || pos.getZ() != this.chunkZ) {
+                    return EMPTY;
+                }
+                int index = pos.getY() - this.minSection;
+                if (index < 0 || index >= this.cached.length) {
+                    return EMPTY;
+                }
+                byte seen = this.state[index];
+                if (seen == 1) {
+                    return this.cached[index];
+                }
+                if (seen == 2) {
+                    return EMPTY;
+                }
+                DataLayer lighting = this.live.getDataLayerData(pos);
+                if (lighting == null) {
+                    this.state[index] = 2;
+                    return EMPTY;
+                }
+                DataLayer copy = lighting.copy();
+                this.cached[index] = copy;
+                this.state[index] = 1;
+                return copy;
             }
 
             @Override

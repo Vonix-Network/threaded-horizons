@@ -1,8 +1,9 @@
 package network.vonix.threadedhorizons.common.optimization.worldgen;
 
 /**
- * Official 40.3.11 {@code TheEndBiomeSource.getNoiseBiome} decision function
- * (javap of the mapped class). The cache mixin must return the same branch.
+ * Official 1.18.2 / Forge 40.3.12 {@code TheEndBiomeSource.getNoiseBiome}
+ * decision function (javap of the mapped class). The cache mixin must return
+ * the same branch.
  */
 public final class EndBiomeDecision {
     public enum Kind {

@@ -1,6 +1,7 @@
 package network.vonix.threadedhorizons.common.util;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import network.vonix.threadedhorizons.common.lifecycle.WorkerThreadLocals;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -73,5 +74,13 @@ public class ThreadedHorizonsForkJoinWorkerThreadFactory implements ForkJoinPool
             super(pool);
         }
 
+        @Override
+        protected void onTermination(Throwable exception) {
+            try {
+                WorkerThreadLocals.clearCurrentThread();
+            } finally {
+                super.onTermination(exception);
+            }
+        }
     }
 }

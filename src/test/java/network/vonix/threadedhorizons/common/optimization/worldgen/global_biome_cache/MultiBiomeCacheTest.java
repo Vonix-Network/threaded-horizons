@@ -5,6 +5,7 @@ import net.minecraft.core.QuartPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Climate;
+import network.vonix.threadedhorizons.common.config.ThreadedHorizonsConfig;
 import network.vonix.threadedhorizons.common.util.ListIndexedIterable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -17,6 +18,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -128,6 +130,8 @@ class MultiBiomeCacheTest {
 
         Holder<Biome> resampled = cache.getBiomeForNoiseGen(4, 4, 4, first, false);
         assertSame(holders.get(0), resampled);
+        assertFalse(ThreadedHorizonsConfig.threadedWorldGenConfig.useGlobalBiomeCache,
+                "isolation tests do not enable the excluded family");
         SectionPos section = SectionPos.of(QuartPos.toSection(4), QuartPos.toSection(4), QuartPos.toSection(4));
         Holder<Biome> direct = bySampler.get(first);
         assertSame(direct, cache.getBiomeForNoiseGen(

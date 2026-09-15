@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class IoSystemConfigCacheLimitTest {
@@ -28,6 +29,39 @@ class IoSystemConfigCacheLimitTest {
         assertEquals(1536, io.chunkDataCacheSoftLimit);
         assertEquals(6144, io.chunkDataCacheLimit);
         assertEquals(6144, ((Number) config.get("chunkDataCacheLimit")).intValue());
+    }
+
+    @Test
+    void explicitOwnerTuningInsideSafeRangeIsPreserved() {
+        CommentedConfig config = ioConfig(2000, 7000);
+        ThreadedHorizonsConfig.IoSystemConfig io = new ThreadedHorizonsConfig.IoSystemConfig(config);
+        assertEquals(2000, io.chunkDataCacheSoftLimit);
+        assertEquals(7000, io.chunkDataCacheLimit);
+        assertEquals(2000, ((Number) config.get("chunkDataCacheSoftLimit")).intValue());
+        assertEquals(7000, ((Number) config.get("chunkDataCacheLimit")).intValue());
+    }
+
+    @Test
+    void oversizedLegacyLimitsAreClampedAndWrittenBack() {
+        CommentedConfig config = ioConfig(10000, 20000);
+        ThreadedHorizonsConfig.IoSystemConfig io = new ThreadedHorizonsConfig.IoSystemConfig(config);
+        assertEquals(4096, io.chunkDataCacheSoftLimit);
+        assertEquals(8192, io.chunkDataCacheLimit);
+        assertEquals(4096, ((Number) config.get("chunkDataCacheSoftLimit")).intValue());
+        assertEquals(8192, ((Number) config.get("chunkDataCacheLimit")).intValue());
+    }
+
+    @Test
+    void extraSoftLimitWritesHonorConfiguredSoftLimit() {
+        assertEquals(0, ThreadedHorizonsConfig.IoSystemConfig.extraSoftLimitWrites(1535, 1536));
+        assertEquals(1, ThreadedHorizonsConfig.IoSystemConfig.extraSoftLimitWrites(1536, 1536));
+        assertEquals(1, ThreadedHorizonsConfig.IoSystemConfig.extraSoftLimitWrites(1551, 1536));
+        assertEquals(2, ThreadedHorizonsConfig.IoSystemConfig.extraSoftLimitWrites(1568, 1536));
+        assertEquals(0, ThreadedHorizonsConfig.IoSystemConfig.extraSoftLimitWrites(1999, 2000));
+        assertEquals(1, ThreadedHorizonsConfig.IoSystemConfig.extraSoftLimitWrites(2000, 2000));
+        assertFalse(ThreadedHorizonsConfig.IoSystemConfig.exceedsHardLimit(6143, 6144));
+        assertTrue(ThreadedHorizonsConfig.IoSystemConfig.exceedsHardLimit(6144, 6144));
+        assertTrue(ThreadedHorizonsConfig.IoSystemConfig.exceedsHardLimit(7000, 7000));
     }
 
     @Test

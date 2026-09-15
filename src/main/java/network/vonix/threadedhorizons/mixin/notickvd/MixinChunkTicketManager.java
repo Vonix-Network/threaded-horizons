@@ -1,17 +1,17 @@
 package network.vonix.threadedhorizons.mixin.notickvd;
 
 import network.vonix.threadedhorizons.common.notickvd.IChunkTicketManager;
-import network.vonix.threadedhorizons.common.notickvd.NoOPTickingMap;
+
 import network.vonix.threadedhorizons.common.notickvd.NoTickSystem;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.Ticket;
 import net.minecraft.server.level.DistanceManager;
 import net.minecraft.core.SectionPos;
-import net.minecraft.server.level.TickingTracker;
+
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Mutable;
+
 import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -23,8 +23,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class MixinChunkTicketManager implements IChunkTicketManager {
 
     @Shadow private long ticketTickCounter;
-    @Mutable
-    @Shadow @Final private TickingTracker tickingTicketsTracker;
     @Shadow @Final private DistanceManager.PlayerTicketTracker playerTicketManager;
 
     @Unique
@@ -33,17 +31,16 @@ public class MixinChunkTicketManager implements IChunkTicketManager {
     @Inject(method = "<init>", at = @At("RETURN"))
     private void onInit(CallbackInfo ci) {
         this.noTickSystem = new NoTickSystem((DistanceManager) (Object) this);
-        this.tickingTicketsTracker = new NoOPTickingMap();
     }
 
     @Inject(method = "addPlayer", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/DistanceManager$FixedPlayerDistanceChunkTracker;update(JIZ)V", ordinal = 0, shift = At.Shift.AFTER))
     private void onHandleChunkEnter(SectionPos pos, ServerPlayer player, CallbackInfo ci) {
-        this.noTickSystem.addPlayerSource(pos.chunk());
+        this.noTickSystem.addPlayerSource(player.getUUID(), pos.chunk());
     }
 
     @Inject(method = "removePlayer", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/DistanceManager$FixedPlayerDistanceChunkTracker;update(JIZ)V", ordinal = 0, shift = At.Shift.AFTER))
     private void onHandleChunkLeave(SectionPos pos, ServerPlayer player, CallbackInfo ci) {
-        this.noTickSystem.removePlayerSource(pos.chunk());
+        this.noTickSystem.removePlayerSource(player.getUUID(), pos.chunk());
     }
 
     @Inject(method = "purgeStaleTickets", at = @At("RETURN"))

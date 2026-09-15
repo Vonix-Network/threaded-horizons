@@ -3,12 +3,15 @@ package network.vonix.threadedhorizons.mixin.threading.chunkio;
 import com.ibm.asyncutil.locks.AsyncNamedLock;
 import network.vonix.threadedhorizons.common.GlobalExecutors;
 import network.vonix.threadedhorizons.common.chunkio.DirtyChunkGenerations;
+import network.vonix.threadedhorizons.common.chunkio.SaveFutureTracker;
+import network.vonix.threadedhorizons.common.chunkio.ThreadedHorizonsStorageVanillaInterface;
 import network.vonix.threadedhorizons.common.threading.chunkio.ChunkIoMainThreadTaskUtils;
 import network.vonix.threadedhorizons.common.threading.chunkio.ChunkLoadException;
 import network.vonix.threadedhorizons.common.threading.chunkio.ChunkLoadResult;
 import network.vonix.threadedhorizons.common.threading.chunkio.CombinedChunkLoad;
 import network.vonix.threadedhorizons.common.threading.chunkio.IAsyncChunkStorage;
 import network.vonix.threadedhorizons.common.threading.chunkio.ISerializingRegionBasedStorage;
+import network.vonix.threadedhorizons.common.threading.chunkio.AsyncSerializationManager;
 import network.vonix.threadedhorizons.common.util.SneakyThrow;
 import com.mojang.datafixers.DataFixer;
 import com.mojang.datafixers.util.Either;
@@ -43,7 +46,6 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -97,7 +99,8 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
     }
 
     private Set<ChunkPos> scheduledChunks = new HashSet<>();
-    private final ConcurrentLinkedQueue<CompletableFuture<Void>> saveFutures = new ConcurrentLinkedQueue<>();
+    private final SaveFutureTracker saveTracker = new SaveFutureTracker();
+    private static final int MAX_SAVE_FUTURES = SaveFutureTracker.MAX_SAVE_FUTURES;
 
     /**
      * @author vonix
@@ -195,6 +198,7 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
         }
         long generation = DirtyChunkGenerations.captureForSave(chunk);
         ChunkPos chunkPos = chunk.getPos();
+        boolean profilerPushed = false;
         try {
             ChunkStatus chunkStatus = chunk.getStatus();
             if (chunkStatus.getChunkType() != ChunkStatus.ChunkType.LEVELCHUNK) {
@@ -206,9 +210,29 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
                 }
             }
             this.level.getProfiler().push("chunkSave");
-            CompoundTag compoundTag = ChunkSerializer.write(this.level, chunk);
-            CompletableFuture<Void> stored = this.worker.store(chunkPos, compoundTag);
-            this.saveFutures.add(stored);
+            profilerPushed = true;
+            AsyncSerializationManager.Scope serializationScope = new AsyncSerializationManager.Scope(chunk, this.level);
+            serializationScope.open();
+            AsyncSerializationManager.push(serializationScope);
+            CompoundTag compoundTag;
+            try {
+                compoundTag = ChunkSerializer.write(this.level, chunk);
+            } finally {
+                AsyncSerializationManager.pop(serializationScope);
+            }
+            if (!this.saveTracker.tryReserve()) {
+                throw new IllegalStateException("chunk save future queue is full");
+            }
+            CompletableFuture<Void> stored;
+            try {
+                stored = this.worker instanceof ThreadedHorizonsStorageVanillaInterface owned
+                        ? owned.storeOwned(chunkPos, compoundTag)
+                        : this.worker.store(chunkPos, compoundTag);
+            } catch (Throwable storeFailure) {
+                this.saveTracker.release();
+                throw storeFailure;
+            }
+            this.saveTracker.attach(stored);
             stored.whenComplete((unused, throwable) -> {
                 DirtyChunkGenerations.applyStoreOutcome(chunk, generation, throwable);
                 if (throwable != null) {
@@ -218,25 +242,23 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
             // The storage write is deliberately asynchronous. Blocking the server thread here
             // deadlocks shutdown and can prevent vanilla from reaching its save barrier. The
             // completion callback keeps the chunk dirty until the exact generation is durable;
-            // processUnloads/flushWorker join the tracked futures at the appropriate barrier.
+            // processUnloads/flushWorker join in-flight stores at the appropriate barrier.
             this.markPosition(chunkPos, chunkStatus.getChunkType());
-            this.level.getProfiler().pop();
             return true;
         } catch (Exception exception) {
             DirtyChunkGenerations.applyStoreOutcome(chunk, generation, exception);
             LOGGER.error("Failed to save chunk {},{}", chunkPos.x, chunkPos.z, exception);
             return false;
+        } finally {
+            if (profilerPushed) {
+                this.level.getProfiler().pop();
+            }
         }
     }
 
     @Inject(method = "processUnloads", at = @At("RETURN"))
     private void awaitUnloadedStores(BooleanSupplier keepGoing, CallbackInfo info) {
         joinSaveFutures();
-    }
-
-    @Inject(method = "tick", at = @At("HEAD"))
-    private void onTick(CallbackInfo info) {
-        this.saveFutures.removeIf(CompletableFuture::isDone);
     }
 
     @Override
@@ -246,7 +268,6 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
     }
 
     private void joinSaveFutures() {
-        final CompletableFuture<Void> future = CompletableFuture.allOf(this.saveFutures.toArray(new CompletableFuture[0]));
-        this.mainThreadExecutor.managedBlock(future::isDone);
+        this.mainThreadExecutor.managedBlock(this.saveTracker::isIdle);
     }
 }

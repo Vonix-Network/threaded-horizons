@@ -46,18 +46,20 @@ public abstract class MixinStorageIoWorker {
     private void onWriteResult(CallbackInfo ci) {
         if (!this.pendingWrites.isEmpty()) {
             checkHardLimit();
-            if (this.pendingWrites.size() >= ThreadedHorizonsConfig.ioSystemConfig.chunkDataCacheSoftLimit) {
-                int writeFrequency = Math.max(1, (this.pendingWrites.size() - ThreadedHorizonsConfig.ioSystemConfig.chunkDataCacheSoftLimit) / 16);
-                for (int i = 0; i < writeFrequency; i++) {
-                    writeResult0();
-                }
+            int writeFrequency = ThreadedHorizonsConfig.IoSystemConfig.extraSoftLimitWrites(
+                    this.pendingWrites.size(),
+                    ThreadedHorizonsConfig.ioSystemConfig.chunkDataCacheSoftLimit);
+            for (int i = 0; i < writeFrequency; i++) {
+                writeResult0();
             }
         }
     }
 
     @Unique
     private void checkHardLimit() {
-        if (this.pendingWrites.size() >= ThreadedHorizonsConfig.ioSystemConfig.chunkDataCacheLimit) {
+        if (ThreadedHorizonsConfig.IoSystemConfig.exceedsHardLimit(
+                this.pendingWrites.size(),
+                ThreadedHorizonsConfig.ioSystemConfig.chunkDataCacheLimit)) {
             LOGGER.warn("ChunkAccess data cache size exceeded hard limit ({} >= {}), forcing writes to disk (you can increase chunkDataCacheLimit in threadedhorizons.toml)", this.pendingWrites.size(), ThreadedHorizonsConfig.ioSystemConfig.chunkDataCacheLimit);
             final int drainUntil = ThreadedHorizonsConfig.IoSystemConfig.nbtCacheDrainUntilSize(
                     ThreadedHorizonsConfig.ioSystemConfig.chunkDataCacheSoftLimit,

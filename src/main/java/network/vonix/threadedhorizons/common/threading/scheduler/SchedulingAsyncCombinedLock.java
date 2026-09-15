@@ -28,6 +28,7 @@ public class SchedulingAsyncCombinedLock<T> implements Comparable<SchedulingAsyn
     private final Supplier<CompletableFuture<T>> action;
     private final BooleanSupplier cancelled;
     private final CompletableFuture<T> future = new CompletableFuture<>();
+    private final AsyncLock.LockToken[] acquiredTokens;
     private AsyncLock.LockToken acquiredToken;
     private State state = State.QUEUED;
 
@@ -36,8 +37,13 @@ public class SchedulingAsyncCombinedLock<T> implements Comparable<SchedulingAsyn
     }
 
     public SchedulingAsyncCombinedLock(AsyncNamedLock<ChunkPos> lock, Set<ChunkPos> names, IntSupplier priority, SchedulerThread schedulerThread, Supplier<CompletableFuture<T>> action, BooleanSupplier cancelled) {
+        this(lock, names.toArray(ChunkPos[]::new), priority, schedulerThread, action, cancelled);
+    }
+
+    public SchedulingAsyncCombinedLock(AsyncNamedLock<ChunkPos> lock, ChunkPos[] names, IntSupplier priority, SchedulerThread schedulerThread, Supplier<CompletableFuture<T>> action, BooleanSupplier cancelled) {
         this.lock = lock;
-        this.names = names.toArray(ChunkPos[]::new);
+        this.names = names;
+        this.acquiredTokens = new AsyncLock.LockToken[names.length];
         this.priority = priority;
         this.schedulerThread = schedulerThread;
         this.action = action;
@@ -59,24 +65,19 @@ public class SchedulingAsyncCombinedLock<T> implements Comparable<SchedulingAsyn
             this.future.completeExceptionally(throwable);
             return false;
         }
-        final LockEntry[] tryLocks = new LockEntry[names.length];
-        boolean allAcquired = true;
+        int acquired = 0;
+        int failedAt = -1;
         for (int i = 0, namesLength = names.length; i < namesLength; i++) {
-            ChunkPos name = names[i];
-            final LockEntry entry = new LockEntry(name, this.lock.tryLock(name));
-            tryLocks[i] = entry;
-            if (entry.lockToken.isEmpty()) {
-                allAcquired = false;
+            Optional<AsyncLock.LockToken> token = this.lock.tryLock(names[i]);
+            if (token.isEmpty()) {
+                failedAt = i;
                 break;
             }
+            this.acquiredTokens[i] = token.get();
+            acquired++;
         }
-        if (allAcquired) {
-            this.acquiredToken = () -> {
-                for (LockEntry entry : tryLocks) {
-                    //noinspection OptionalGetWithoutIsPresent
-                    entry.lockToken.get().releaseLock(); // if it isn't present then something is really wrong
-                }
-            };
+        if (failedAt < 0) {
+            this.acquiredToken = this::releaseAcquiredTokens;
             try {
                 if (this.cancelled.getAsBoolean()) {
                     this.acquiredToken.releaseLock();
@@ -92,33 +93,33 @@ public class SchedulingAsyncCombinedLock<T> implements Comparable<SchedulingAsyn
             }
             this.state = State.ACTIVE;
             return true;
-        } else {
-            boolean triedRelock = false;
-            for (LockEntry entry : tryLocks) {
-                if (entry == null) continue;
-                entry.lockToken.ifPresent(AsyncLock.LockToken::releaseLock);
-                if (!triedRelock && entry.lockToken.isEmpty()) {
-                    this.state = State.WAITING;
-                    this.lock.acquireLock(entry.name).whenComplete((lockToken, throwable) -> {
-                        if (lockToken != null) {
-                            lockToken.releaseLock();
-                        }
-                        if (throwable != null) {
-                            failBeforeAction(throwable);
-                        } else if (requeueAfterWait()) {
-                            this.schedulerThread.addPendingLock(this);
-                        }
-                    });
-                    triedRelock = true;
-                }
+        }
+        releaseAcquiredPrefix(acquired);
+        this.state = State.WAITING;
+        this.lock.acquireLock(names[failedAt]).whenComplete((lockToken, throwable) -> {
+            if (lockToken != null) {
+                lockToken.releaseLock();
             }
-            if (!triedRelock) {
-                // shouldn't happen at all...
-                System.err.println("Some issue occurred while doing locking, retrying");
-                this.state = State.QUEUED;
-                return this.tryAcquire();
+            if (throwable != null) {
+                failBeforeAction(throwable);
+            } else if (requeueAfterWait()) {
+                this.schedulerThread.addPendingLock(this);
             }
-            return false;
+        });
+        return false;
+    }
+
+    private void releaseAcquiredTokens() {
+        releaseAcquiredPrefix(this.acquiredTokens.length);
+    }
+
+    private void releaseAcquiredPrefix(int count) {
+        for (int i = 0; i < count; i++) {
+            AsyncLock.LockToken token = this.acquiredTokens[i];
+            this.acquiredTokens[i] = null;
+            if (token != null) {
+                token.releaseLock();
+            }
         }
     }
 
@@ -239,9 +240,5 @@ public class SchedulingAsyncCombinedLock<T> implements Comparable<SchedulingAsyn
         WAITING,
         ACTIVE,
         TERMINAL
-    }
-
-    private record LockEntry(ChunkPos name,
-                             Optional<AsyncLock.LockToken> lockToken) {
     }
 }

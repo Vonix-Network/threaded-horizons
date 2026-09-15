@@ -4,9 +4,10 @@
 
 - Java 17
 - Minecraft 1.18.2
-- Forge 40.3.11 installer/userdev coordinate `1.18.2-40.3.11`
+- Forge 40.3.12 installer/userdev coordinate `1.18.2-40.3.12`
+- Declared Forge range `[40.3.12,41)`
 
-Place `threaded-horizons-mc1.18.2-1.0.0.jar` in `mods/`. Do not install this release into a live production world without a backup.
+Place the locally built `threaded-horizons-mc1.18.2-1.0.7.jar` in `mods/` when testing the `candidate/1.0.7` development branch. This is not a published release asset. Do not install this candidate into a live production world without a backup. Do not install it alongside a C2ME-branded artifact.
 
 ## Source build
 

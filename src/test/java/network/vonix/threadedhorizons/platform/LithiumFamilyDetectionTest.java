@@ -8,10 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LithiumFamilyDetectionTest {
 
     @Test
-    void lithiumOrCanaryIsTheSameAllocFamily() {
+    void lithiumCanaryOrRadiumIsTheSameAllocFamily() {
         assertTrue(LoaderHooks.isLithiumFamilyId("lithium"));
         assertTrue(LoaderHooks.isLithiumFamilyId("canary"));
+        assertTrue(LoaderHooks.isLithiumFamilyId("radium"));
         assertFalse(LoaderHooks.isLithiumFamilyId("modernfix"));
+        assertFalse(LoaderHooks.isLithiumFamilyId("c2me"));
         assertFalse(LoaderHooks.isLithiumFamilyId(""));
         assertFalse(LoaderHooks.isLithiumFamilyId(null));
     }

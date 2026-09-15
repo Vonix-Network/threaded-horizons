@@ -29,6 +29,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
@@ -50,6 +51,10 @@ public class ThreadedHorizonsCompatibilityModule implements IMixinConfigPlugin {
     public void onLoad(String mixinPackage) {
         if (!initialized.compareAndSet(false, true)) throw new IllegalStateException("Already initialized");
         LOGGER.info("Initializing Threaded Horizons Compatibility Module");
+        refreshConfiguredModules();
+    }
+
+    private void refreshConfiguredModules() {
         CommentedFileConfig config = CommentedFileConfig.builder(LoaderHooks.getConfigDir().resolve("threadedhorizons-compat.toml"))
                 .autosave()
                 .preserveInsertionOrder()
@@ -84,6 +89,8 @@ public class ThreadedHorizonsCompatibilityModule implements IMixinConfigPlugin {
 
     @Override
     public List<String> getMixins() {
+        // Mixin config loading can race ModList population; retry discovery at activation time.
+        refreshConfiguredModules();
         final ArrayList<String> extraMixins = new ArrayList<>();
         for (String subPackage : enabledSubPackages) {
             final String name = "threadedhorizons-compat." + subPackage + ".mixins.json";
@@ -120,7 +127,16 @@ public class ThreadedHorizonsCompatibilityModule implements IMixinConfigPlugin {
         if (!LoaderHooks.isModLoaded(modid)) {
             return;
         }
-        String version = LoaderHooks.getModVersion(modid).orElse("unknown");
+        Optional<String> resolvedVersion = LoaderHooks.getModVersion(modid);
+        if (resolvedVersion.isEmpty()) {
+            LOGGER.info("Deferring compatibility module for {} until its Forge version is available", modid);
+            return;
+        }
+        String version = resolvedVersion.get();
+        if (!isVersionInRange(version, versionRange)) {
+            LOGGER.warn("Not adding compatibility module for {}@{}: outside supported range {}", modid, version, versionRange);
+            return;
+        }
         if (ConfigUtils.getValue(
                 configScope,
                 subPackage,
@@ -134,6 +150,79 @@ public class ThreadedHorizonsCompatibilityModule implements IMixinConfigPlugin {
         } else {
             LOGGER.info("Not adding compatibility module for {}@{}({}) (disabled in config)", modid, version, versionRange);
         }
+    }
+
+    static boolean isVersionInRange(String version, String range) {
+        if (version == null || range == null || version.isBlank() || range.isBlank()) {
+            return false;
+        }
+        try {
+            String candidate = version.trim();
+            String expression = range.trim();
+            if ((expression.startsWith("[") || expression.startsWith("("))
+                    && (expression.endsWith("]") || expression.endsWith(")"))) {
+                String[] bounds = expression.substring(1, expression.length() - 1).split(",", -1);
+                if (bounds.length != 2) {
+                    return false;
+                }
+                boolean lowerOk = bounds[0].isBlank()
+                        || compareVersions(candidate, bounds[0].trim()) >= (expression.startsWith("[") ? 0 : 1);
+                boolean upperOk = bounds[1].isBlank()
+                        || compareVersions(candidate, bounds[1].trim()) <= (expression.endsWith("]") ? 0 : -1);
+                return lowerOk && upperOk;
+            }
+            if (expression.startsWith(">=")) return compareVersions(candidate, expression.substring(2).trim()) >= 0;
+            if (expression.startsWith("<=")) return compareVersions(candidate, expression.substring(2).trim()) <= 0;
+            if (expression.startsWith(">")) return compareVersions(candidate, expression.substring(1).trim()) > 0;
+            if (expression.startsWith("<")) return compareVersions(candidate, expression.substring(1).trim()) < 0;
+            if (expression.startsWith("=")) expression = expression.substring(1).trim();
+            return compareVersions(candidate, expression) == 0;
+        } catch (RuntimeException invalidRange) {
+            LOGGER.warn("Ignoring malformed compatibility version range {} for version {}", range, version);
+            return false;
+        }
+    }
+
+    private static int compareVersions(String left, String right) {
+        String[] leftParts = normalizeVersion(left).split("\\.");
+        String[] rightParts = normalizeVersion(right).split("\\.");
+        int count = Math.max(leftParts.length, rightParts.length);
+        for (int index = 0; index < count; index++) {
+            int leftPart = index < leftParts.length ? parseVersionPart(leftParts[index]) : 0;
+            int rightPart = index < rightParts.length ? parseVersionPart(rightParts[index]) : 0;
+            int comparison = Integer.compare(leftPart, rightPart);
+            if (comparison != 0) {
+                return comparison;
+            }
+        }
+        return 0;
+    }
+
+    private static String normalizeVersion(String version) {
+        String candidate = version.trim();
+        if (candidate.startsWith("v") || candidate.startsWith("V")) {
+            candidate = candidate.substring(1);
+        }
+        int suffix = candidate.length();
+        for (int index = 0; index < candidate.length(); index++) {
+            char current = candidate.charAt(index);
+            if (current == '-' || current == '+') {
+                suffix = index;
+                break;
+            }
+        }
+        candidate = candidate.substring(0, suffix);
+        if (!candidate.matches("\\d+(?:\\.\\d+)*")) {
+            throw new IllegalArgumentException("invalid version: " + version);
+        }
+        return candidate;
+    }
+
+    private static int parseVersionPart(String part) {
+        if (part.isBlank() || !part.chars().allMatch(Character::isDigit)) {
+            throw new IllegalArgumentException("non-numeric version part: " + part);
+        }
+        return Integer.parseInt(part);
     }
 
     private void checkInjectReferenceMaps() {

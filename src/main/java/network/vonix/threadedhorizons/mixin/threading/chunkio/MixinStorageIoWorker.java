@@ -15,7 +15,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.locks.LockSupport;
+import java.util.concurrent.TimeUnit;
 
 @Mixin(IOWorker.class)
 public abstract class MixinStorageIoWorker implements IAsyncChunkStorage {
@@ -37,8 +37,13 @@ public abstract class MixinStorageIoWorker implements IAsyncChunkStorage {
     @Inject(method = "close", at = @At(value = "INVOKE", target = "Lnet/minecraft/util/thread/ProcessorMailbox;close()V", shift = At.Shift.AFTER))
     private void onClose(CallbackInfo ci) {
         threadExecutor.shutdown();
-        while (!threadExecutor.isTerminated()) {
-            LockSupport.parkNanos("Waiting for thread executor termination", 100_000);
+        try {
+            if (!threadExecutor.awaitTermination(10, TimeUnit.SECONDS) || !threadExecutor.isTerminated()) {
+                throw new IllegalStateException("IO worker executor did not terminate with its queue drained");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while awaiting IO worker executor", interrupted);
         }
     }
 }

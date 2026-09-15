@@ -14,9 +14,10 @@ class MixinStorageIoWorkerSoftLimitContractTest {
     void softLimitDrainScalesWithOverflowInsteadOfClampingToZero() throws Exception {
         String body = Files.readString(Path.of(
                 "src/main/java/network/vonix/threadedhorizons/mixin/optimization/chunkio/limit_nbt_cache/MixinStorageIoWorker.java"));
-        assertTrue(body.contains("Math.max(1,"));
-        assertFalse(body.contains("Math.min(1,"));
+        assertTrue(body.contains("extraSoftLimitWrites"));
+        assertTrue(body.contains("exceedsHardLimit"));
         assertTrue(body.contains("nbtCacheDrainUntilSize"));
+        assertFalse(body.contains("Math.min(1,"));
         assertFalse(body.contains("chunkDataCacheSoftLimit * 0.75"));
     }
 }

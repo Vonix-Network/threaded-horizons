@@ -1,6 +1,7 @@
 package network.vonix.threadedhorizons.mixin.optimization.chunkscheduling.idle_tasks.autosave.enhanced_autosave;
 
 import network.vonix.threadedhorizons.common.config.ThreadedHorizonsConfig;
+import network.vonix.threadedhorizons.common.diagnostics.RuntimeDiagnostics;
 import network.vonix.threadedhorizons.common.optimization.chunkscheduling.idle_tasks.IThreadedAnvilChunkStorage;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Object2LongLinkedOpenHashMap;
@@ -14,11 +15,24 @@ import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.concurrent.CompletableFuture;
 
 @Mixin(ChunkMap.class)
 public abstract class MixinThreadedAnvilChunkStorage implements IThreadedAnvilChunkStorage {
+
+    @Unique
+    private static final int MAX_AUTOSAVE_QUEUE = 65_536;
+
+    @Unique
+    private static final Logger LOGGER = LoggerFactory.getLogger("Threaded Horizons Enhanced Autosave");
 
     @Shadow @Final private Long2ObjectLinkedOpenHashMap<ChunkHolder> updatingChunkMap;
 
@@ -27,49 +41,102 @@ public abstract class MixinThreadedAnvilChunkStorage implements IThreadedAnvilCh
     @Unique
     private final Object2LongLinkedOpenHashMap<ChunkPos> dirtyChunkPosForAutoSave = new Object2LongLinkedOpenHashMap<>();
 
+    @Unique
+    private final LinkedHashSet<ChunkPos> overflowDirtyChunkPosForAutoSave = new LinkedHashSet<>();
+
     @Override
     public void enqueueDirtyChunkPosForAutoSave(ChunkPos chunkPos) {
         if (chunkPos == null) {
             return;
         }
         synchronized (this.dirtyChunkPosForAutoSave) {
+            if (this.dirtyChunkPosForAutoSave.containsKey(chunkPos)) {
+                this.dirtyChunkPosForAutoSave.putAndMoveToLast(chunkPos, System.currentTimeMillis());
+                this.overflowDirtyChunkPosForAutoSave.remove(chunkPos);
+                return;
+            }
+            if (this.dirtyChunkPosForAutoSave.size() >= MAX_AUTOSAVE_QUEUE) {
+                RuntimeDiagnostics.recordRejected();
+                LOGGER.warn("Enhanced autosave queue full; retaining dirty chunk {} for a later autosave cycle", chunkPos);
+                this.overflowDirtyChunkPosForAutoSave.add(chunkPos);
+                return;
+            }
             this.dirtyChunkPosForAutoSave.putAndMoveToLast(chunkPos, System.currentTimeMillis());
+            this.overflowDirtyChunkPosForAutoSave.remove(chunkPos);
         }
     }
 
     @Override
     public boolean runOneChunkAutoSave() {
         synchronized (this.dirtyChunkPosForAutoSave) {
-            final ObjectBidirectionalIterator<Object2LongMap.Entry<ChunkPos>> iterator = this.dirtyChunkPosForAutoSave.object2LongEntrySet().fastIterator();
-            while (iterator.hasNext()) {
-                final Object2LongMap.Entry<ChunkPos> entry = iterator.next();
-                if (System.currentTimeMillis() - entry.getLongValue() < ThreadedHorizonsConfig.generalOptimizationsConfig.autoSaveConfig.delay) break;
-                if (entry.getKey() == null) {
-                    iterator.remove();
-                    continue;
-                }
-                ChunkHolder chunkHolder = this.updatingChunkMap.get(entry.getKey().toLong());
-                if (chunkHolder == null) {
-                    iterator.remove();
-                    continue;
-                }
-                final CompletableFuture<ChunkAccess> savingFuture = chunkHolder.getChunkToSave();
-                if (!savingFuture.isDone()) {
-                    savingFuture.handle((chunk, throwable) -> null);
-                    continue;
-                }
-                boolean scheduled = this.saveChunkIfNeeded(chunkHolder);
-                ChunkAccess chunk = savingFuture.getNow(null);
-                if (scheduled || (chunk != null && chunk.isUnsaved())) {
-                    if (scheduled) {
+            promoteOverflowAutosaves();
+            try {
+                final ObjectBidirectionalIterator<Object2LongMap.Entry<ChunkPos>> iterator = this.dirtyChunkPosForAutoSave.object2LongEntrySet().fastIterator();
+                while (iterator.hasNext()) {
+                    final Object2LongMap.Entry<ChunkPos> entry = iterator.next();
+                    if (System.currentTimeMillis() - entry.getLongValue() < ThreadedHorizonsConfig.generalOptimizationsConfig.autoSaveConfig.delay) break;
+                    if (entry.getKey() == null) {
                         iterator.remove();
+                        continue;
                     }
-                    return true;
+                    if (saveDirtyChunkForAutosave(entry.getKey())) {
+                        iterator.remove();
+                        this.overflowDirtyChunkPosForAutoSave.remove(entry.getKey());
+                        return true;
+                    }
+                    ChunkHolder chunkHolder = this.updatingChunkMap.get(entry.getKey().toLong());
+                    if (chunkHolder == null) {
+                        iterator.remove();
+                        continue;
+                    }
+                    final CompletableFuture<ChunkAccess> savingFuture = chunkHolder.getChunkToSave();
+                    if (!savingFuture.isDone()) {
+                        savingFuture.handle((chunk, throwable) -> null);
+                        continue;
+                    }
+                    boolean scheduled = this.saveChunkIfNeeded(chunkHolder);
+                    ChunkAccess chunk = savingFuture.getNow(null);
+                    if (scheduled || (chunk != null && chunk.isUnsaved())) {
+                        if (scheduled) {
+                            iterator.remove();
+                        }
+                        return true;
+                    }
+                    iterator.remove();
                 }
-                iterator.remove();
+                return false;
+            } finally {
+                promoteOverflowAutosaves();
             }
         }
+    }
 
+    @Unique
+    private void promoteOverflowAutosaves() {
+        if (this.overflowDirtyChunkPosForAutoSave.isEmpty()) {
+            return;
+        }
+        Iterator<ChunkPos> overflow = this.overflowDirtyChunkPosForAutoSave.iterator();
+        while (overflow.hasNext() && this.dirtyChunkPosForAutoSave.size() < MAX_AUTOSAVE_QUEUE) {
+            ChunkPos chunkPos = overflow.next();
+            overflow.remove();
+            if (chunkPos == null || this.dirtyChunkPosForAutoSave.containsKey(chunkPos)) {
+                continue;
+            }
+            this.dirtyChunkPosForAutoSave.putAndMoveToLast(chunkPos, 0L);
+        }
+    }
+
+    @Unique
+    protected boolean saveDirtyChunkForAutosave(ChunkPos chunkPos) {
         return false;
+    }
+
+    @Inject(method = "close", at = @At("TAIL"))
+    private void clearAutosaveQueue(CallbackInfo info) {
+        synchronized (this.dirtyChunkPosForAutoSave) {
+            this.dirtyChunkPosForAutoSave.clear();
+            this.overflowDirtyChunkPosForAutoSave.clear();
+        }
     }
 }

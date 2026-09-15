@@ -24,5 +24,16 @@ class AsyncChunkRequestMixinRetiredTest {
     void liveConfigDefaultsRetireAsyncRequestAndKeepThreadedWorldgen() {
         assertFalse(ThreadedHorizonsConfig.generalOptimizationsConfig.optimizeAsyncChunkRequest);
         assertTrue(ThreadedHorizonsConfig.threadedWorldGenConfig.allowThreadedFeatures);
+        assertTrue(network.vonix.threadedhorizons.common.threading.worldgen.FeatureThreadingPolicy
+                .shouldParallelizeFeatures(ThreadedHorizonsConfig.threadedWorldGenConfig.allowThreadedFeatures, false));
+        assertFalse(network.vonix.threadedhorizons.common.threading.worldgen.FeatureThreadingPolicy
+                .shouldParallelizeFeatures(ThreadedHorizonsConfig.threadedWorldGenConfig.allowThreadedFeatures, true));
+    }
+
+    @Test
+    void pluginHardSkipDoesNotReadOptimizeAsyncChunkRequestFlag() {
+        ThreadedHorizonsMixinPlugin plugin = new ThreadedHorizonsMixinPlugin();
+        assertFalse(plugin.shouldApplyMixin(TARGET, ASYNC_REQUEST),
+                "live plugin path must ignore the retired config key");
     }
 }

@@ -123,6 +123,77 @@ class StorageStateMachineTest {
     }
 
     @Test
+    void serializeFailureThenRetryableFallbackWriteFailureMakesFlushExceptional() throws Exception {
+        ThreadedHorizonsStorageThread storage = open();
+        long pos = new ChunkPos(40, 41).toLong();
+        storage.hooks.serializeFault = new RuntimeException("serialize failed");
+        storage.hooks.writeFault = new RuntimeException(
+                new StorageFailureException(StorageFailureClass.RETRYABLE, "fallback write is retryable", null));
+
+        CompletableFuture<Void> stored = storage.store(pos, tag(12));
+        assertThrows(CompletionException.class, stored::join);
+        CompletionException flush = assertThrows(
+                CompletionException.class,
+                () -> storage.flush(true).join(),
+                "flush must fail while the fallback write remains queued and undurable");
+        assertNotNull(rootCause(flush));
+        assertTrue(storage.getRetainedSlotCount() > 0,
+                "the retryable fallback must remain retained until it becomes durable or fails");
+
+        storage.hooks.writeFault = null;
+        storage.flush(true).get(10, TimeUnit.SECONDS);
+        assertEquals(12, this.backend.diskGet(pos).getInt("v"));
+    }
+
+    @Test
+    void publicStoreCopiesCallerTagAndStoreOwnedDoesNot() throws Exception {
+        ThreadedHorizonsStorageThread storage = open();
+        CountDownLatch copiedEntered = new CountDownLatch(1);
+        CountDownLatch copiedRelease = new CountDownLatch(1);
+        storage.hooks.beforeSerialize = snapshot -> {
+            copiedEntered.countDown();
+            awaitLatch(copiedRelease);
+        };
+        long copiedPos = new ChunkPos(8, 9).toLong();
+        CompoundTag copied = tag(21);
+        CompletableFuture<Void> copiedWrite = storage.store(copiedPos, copied);
+        assertTrue(copiedEntered.await(5, TimeUnit.SECONDS));
+        copied.putInt("v", -21);
+        copiedRelease.countDown();
+        copiedWrite.get(10, TimeUnit.SECONDS);
+        storage.flush(true).get(10, TimeUnit.SECONDS);
+        assertEquals(21, this.backend.diskGet(copiedPos).getInt("v"));
+
+        CountDownLatch ownedEntered = new CountDownLatch(1);
+        CountDownLatch ownedRelease = new CountDownLatch(1);
+        storage.hooks.beforeSerialize = snapshot -> {
+            ownedEntered.countDown();
+            awaitLatch(ownedRelease);
+        };
+        long ownedPos = new ChunkPos(10, 11).toLong();
+        CompoundTag owned = tag(22);
+        CompletableFuture<Void> ownedWrite = storage.storeOwned(ownedPos, owned);
+        assertTrue(ownedEntered.await(5, TimeUnit.SECONDS));
+        owned.putInt("v", 23);
+        ownedRelease.countDown();
+        ownedWrite.get(10, TimeUnit.SECONDS);
+        storage.flush(true).get(10, TimeUnit.SECONDS);
+        assertEquals(23, this.backend.diskGet(ownedPos).getInt("v"),
+                "storeOwned transfers the tag; mutation during serialize is visible because there is no extra copy");
+    }
+
+    @Test
+    void serializeDoesNotDeepCopyAnAlreadyIsolatedSnapshot() throws Exception {
+        String body = java.nio.file.Files.readString(java.nio.file.Path.of(
+                "src/main/java/network/vonix/threadedhorizons/common/chunkio/ThreadedHorizonsStorageThread.java"));
+        int serialize = body.indexOf("private void serializeRequest(PositionedRequest request)");
+        assertTrue(serialize >= 0, body);
+        String method = body.substring(serialize, body.indexOf("private void onSerializeFinished", serialize));
+        assertTrue(method.contains("request.serialized = request.snapshot"), method);
+        assertFalse(method.contains("request.snapshot.copy()"), method);
+    }
+
+    @Test
     void storeFutureIsExactAndFailsOnWrite() {
         ThreadedHorizonsStorageThread storage = open();
         long pos = new ChunkPos(1, 1).toLong();

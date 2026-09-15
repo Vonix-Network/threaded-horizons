@@ -60,6 +60,26 @@ public class Updaters {
                 worldGenConfig.set("reduceLockRadius", true);
             }
         });
+        updaters.put(4, source -> {
+            final Object ioSystem = source.get("ioSystem");
+            if (ioSystem instanceof Config ioConfig) {
+                clampIoCacheLimit(ioConfig, "chunkDataCacheSoftLimit", 4096);
+                clampIoCacheLimit(ioConfig, "chunkDataCacheLimit", 8192);
+            }
+        });
+    }
+
+    static void clampIoCacheLimit(Config ioConfig, String key, int max) {
+        final Object value = ioConfig.get(key);
+        if (!(value instanceof Number number)) {
+            return;
+        }
+        int configured = number.intValue();
+        if (configured > max || configured < 1) {
+            int clamped = Math.min(Math.max(1, configured), max);
+            LOGGER.warn("Migrating {} from {} to {} to prevent unbounded IO NBT retention", key, configured, clamped);
+            ioConfig.set(key, clamped);
+        }
     }
 
     public static void update(Config config) {

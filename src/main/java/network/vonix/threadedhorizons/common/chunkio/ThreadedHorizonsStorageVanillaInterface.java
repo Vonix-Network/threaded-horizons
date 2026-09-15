@@ -31,6 +31,14 @@ public class ThreadedHorizonsStorageVanillaInterface extends IOWorker {
         return this.backend.store(pos.toLong(), nbt);
     }
 
+    /**
+     * Transfer ownership of a freshly serialized tag. Callers must not mutate
+     * {@code nbt} after this returns.
+     */
+    public CompletableFuture<Void> storeOwned(ChunkPos pos, @Nullable CompoundTag nbt) {
+        return this.backend.storeOwned(pos.toLong(), nbt);
+    }
+
     @Nullable
     @Override
     public CompoundTag load(ChunkPos pos) {

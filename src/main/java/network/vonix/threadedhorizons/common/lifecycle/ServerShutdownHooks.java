@@ -45,6 +45,7 @@ public final class ServerShutdownHooks {
             hooks.onSchedulerTimeout(timeout, unit);
         }
         hooks.shutdownGlobalExecutors(timeout, unit);
+        WorkerThreadLocals.clearCurrentThread();
         hooks.shutdownLogging();
     }
 

@@ -1,6 +1,8 @@
 # Configuration
 
-File: `config/threadedhorizons.toml` (created on first launch). Config version is `4`. Version-3 files re-enable `reduceLockRadius` after the IoB/Variant Loader support mixins. Version-2 files still retire `optimizeAsyncChunkRequest` first.
+File: `config/threadedhorizons.toml` (created on first launch). Config version is `5`. Version-4 files clamp oversized `ioSystem.chunkDataCacheSoftLimit` / `chunkDataCacheLimit` values (soft max 4096, hard max 8192) while preserving in-range owner tuning. Version-3 files re-enable `reduceLockRadius` after the IoB/Variant Loader support mixins. Version-2 files still retire `optimizeAsyncChunkRequest` first.
+
+`optimizeAsyncChunkRequest` remains a retired safety exclusion: persisted `true` is migrated off and the mixin plugin never applies the family. `useGlobalBiomeCache` is not a writable 1.18.2 key; the field stays false.
 
 | Section | Purpose |
 | --- | --- |

@@ -8,14 +8,13 @@ import network.vonix.threadedhorizons.common.config.ThreadedHorizonsConfig;
 import network.vonix.threadedhorizons.common.threading.scheduler.SchedulerThread;
 import network.vonix.threadedhorizons.common.threading.scheduler.SchedulingAsyncCombinedLock;
 import network.vonix.threadedhorizons.common.threading.scheduler.WorldGenSchedulingState;
+import network.vonix.threadedhorizons.platform.LoaderHooks;
 import com.mojang.datafixers.util.Either;
 import net.minecraft.server.level.ChunkHolder;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkStatus;
 
-import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -24,28 +23,14 @@ import java.util.function.Function;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
-import static network.vonix.threadedhorizons.common.threading.worldgen.ChunkStatusUtils.ChunkStatusThreadingType.AS_IS;
-import static network.vonix.threadedhorizons.common.threading.worldgen.ChunkStatusUtils.ChunkStatusThreadingType.PARALLELIZED;
-import static network.vonix.threadedhorizons.common.threading.worldgen.ChunkStatusUtils.ChunkStatusThreadingType.SINGLE_THREADED;
-
 public class ChunkStatusUtils {
 
     public static ChunkStatusThreadingType getThreadingType(final ChunkStatus status) {
-        if (status.equals(ChunkStatus.STRUCTURE_STARTS)
-                || status.equals(ChunkStatus.STRUCTURE_REFERENCES)
-                || status.equals(ChunkStatus.BIOMES)
-                || status.equals(ChunkStatus.NOISE)
-                || status.equals(ChunkStatus.SURFACE)
-                || status.equals(ChunkStatus.CARVERS)
-                || status.equals(ChunkStatus.LIQUID_CARVERS)
-                || status.equals(ChunkStatus.HEIGHTMAPS)) {
-            return PARALLELIZED;
-        } else if (status.equals(ChunkStatus.SPAWN)) {
-            return SINGLE_THREADED;
-        } else if (status.equals(ChunkStatus.FEATURES)) {
-            return ThreadedHorizonsConfig.threadedWorldGenConfig.allowThreadedFeatures ? PARALLELIZED : SINGLE_THREADED;
-        }
-        return AS_IS;
+        return FeatureThreadingPolicy.threadingType(
+                status,
+                ThreadedHorizonsConfig.threadedWorldGenConfig.allowThreadedFeatures,
+                LoaderHooks.isModLoaded(FeatureThreadingPolicy.YUNGS_BRIDGES_MOD_ID)
+        );
     }
 
     public static <T> CompletableFuture<T> runChunkGenWithLock(ChunkPos target, int radius, IntSupplier priority, AsyncNamedLock<ChunkPos> chunkLock, Supplier<CompletableFuture<T>> action) {
@@ -125,12 +110,16 @@ public class ChunkStatusUtils {
                         : new IllegalStateException("scheduler is stopping"));
             }
 
-            ArrayList<ChunkPos> fetchedLocks = new ArrayList<>((2 * radius + 1) * (2 * radius + 1));
-            for (int x = target.x - radius; x <= target.x + radius; x++)
-                for (int z = target.z - radius; z <= target.z + radius; z++)
-                    fetchedLocks.add(new ChunkPos(x, z));
+            int span = 2 * radius + 1;
+            ChunkPos[] fetchedLocks = new ChunkPos[span * span];
+            int index = 0;
+            for (int x = target.x - radius; x <= target.x + radius; x++) {
+                for (int z = target.z - radius; z <= target.z + radius; z++) {
+                    fetchedLocks[index++] = new ChunkPos(x, z);
+                }
+            }
 
-            final SchedulingAsyncCombinedLock<T> lock = new SchedulingAsyncCombinedLock<>(chunkLock, new HashSet<>(fetchedLocks), priority, SchedulerThread.INSTANCE, action, cancelled);
+            final SchedulingAsyncCombinedLock<T> lock = new SchedulingAsyncCombinedLock<>(chunkLock, fetchedLocks, priority, SchedulerThread.INSTANCE, action, cancelled);
             if (!SchedulerThread.INSTANCE.addPendingLock(lock)) {
                 releaseImmediately = true;
                 return lock.getFuture();
