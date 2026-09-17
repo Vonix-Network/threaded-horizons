@@ -57,8 +57,18 @@ public abstract class MixinThreadedAnvilChunkStorage implements IThreadedAnvilCh
             }
             if (this.dirtyChunkPosForAutoSave.size() >= MAX_AUTOSAVE_QUEUE) {
                 RuntimeDiagnostics.recordRejected();
-                LOGGER.warn("Enhanced autosave queue full; retaining dirty chunk {} for a later autosave cycle", chunkPos);
-                this.overflowDirtyChunkPosForAutoSave.add(chunkPos);
+                if (this.overflowDirtyChunkPosForAutoSave.contains(chunkPos)
+                        || this.overflowDirtyChunkPosForAutoSave.size() < MAX_AUTOSAVE_QUEUE) {
+                    boolean firstOverflow = this.overflowDirtyChunkPosForAutoSave.isEmpty();
+                    this.overflowDirtyChunkPosForAutoSave.add(chunkPos);
+                    if (firstOverflow) {
+                        LOGGER.warn("Enhanced autosave queue full; retaining dirty chunk {} for a later autosave cycle", chunkPos);
+                    }
+                } else {
+                    // Fail-closed: do not grow overflow. The chunk stays unsaved so a
+                    // later mutation or cycle can enqueue it when capacity exists.
+                    LOGGER.warn("Enhanced autosave overflow full; leaving chunk {} dirty for a later cycle", chunkPos);
+                }
                 return;
             }
             this.dirtyChunkPosForAutoSave.putAndMoveToLast(chunkPos, System.currentTimeMillis());

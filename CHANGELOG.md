@@ -2,7 +2,7 @@
 
 ## [1.0.7] - 2026-09-14
 
-RAM and allocation-churn successor for the controlled Forge 1.18.2 candidate. This version is test-only and does not claim production readiness, universal compatibility, measured RAM reduction, or performance improvement.
+RAM and allocation-churn successor for the controlled Forge 1.18.2 candidate, plus two ground-up review repairs. This version is test-only and does not claim production readiness, universal compatibility, measured RAM reduction, or performance improvement.
 
 ### Changed
 
@@ -15,18 +15,25 @@ RAM and allocation-churn successor for the controlled Forge 1.18.2 candidate. Th
 - Unload `toDrop` tracking uses an unboxed `LongOpenHashSet` instead of `HashSet<Long>`.
 - Reduced-task-radius `System.out.printf` is gated behind `network.vonix.threadedhorizons.debug.logTaskRadius`.
 
+### Fixed
+
+- The threaded-worldgen pipeline admission set is keyed by world identity **and** chunk position instead of chunk position alone. Previously Overworld `(0,0)` and Nether `(0,0)` shared a single admission slot on a multi-dimension server, so one dimension's release could free a slot another dimension was still using and the documented unique-chunk bound undercounted live protochunk state. Production worldgen now passes the `ServerLevel` identity into acquire/leave, same-key reentry is refcounted, and cancellation/shutdown still release exactly once. The pipeline limit, bounded fail-closed waiters, and admission semantics are unchanged. Regression coverage: `SchedulerPipelineDimensionKeyTest`.
+- Enhanced-autosave overflow no longer accumulates without limit. Once the primary pending-dirty queue is full, additional dirty positions previously went into an uncapped overflow collection retained for the world lifetime. Overflow now reuses the existing 65,536 bound: a rejected enqueue is not inserted and is **not** marked saved, so the chunk stays dirty and can still be saved by a later cycle when capacity exists. Regression coverage: `AutosaveOverflowBoundTest`.
+
 ### Intentionally unchanged
 
 - `optimizeAsyncChunkRequest` remains retired. `useGlobalBiomeCache` remains false. The ModernFix structure-warmup guard and Lithium-family `mid_tick_chunk_tasks` skip remain. YUNG's Bridges still forces FEATURES single-threading.
+- YUNG's Bridges remains the only FEATURES single-threading force. Its FEATURES-stage template placement writes blocks outside the generating chunk, so parallel FEATURES would still race neighbor writes; the guard stays FEATURES-only and other worldgen statuses stay parallel.
 - IO worker `chunkDataCacheLimit` default stays 6144. Lowering it would change I/O coalescing versus 1.0.6; the existing config keys remain the owner-tunable bound.
 - The global save barrier in `processUnloads` / `flushWorker` is kept. Narrowing it to unloaded positions only would require a retained per-position future set, which this candidate is trying to remove.
+- Lazy lighting snapshot copying is kept. Serialization still runs on the server thread immediately after the snapshot scope is constructed, so restoring eager per-section copies would add back per-save allocation without closing a real race.
 
 ### Verification boundary
 
-- Fresh Java 17 command: `./gradlew clean test build --no-daemon`; 217 tests passed, 0 failures, 0 errors, 0 skipped, and the completion scan passed.
-- Current local artifact: `build/libs/threaded-horizons-mc1.18.2-1.0.7.jar`, 1,071,912 bytes, SHA-256 `e98db0a079b1dc209cbc9003889b5765748730d29551de41f0302f80781ff8c0`.
+- Fresh Java 17 command: `./gradlew clean test build --no-daemon`; 228 tests passed, 0 failures, 0 errors, 0 skipped (77 suites), and the completion scan passed.
+- This candidate is a rebuild of unchanged source, so the local JAR byte-identity varies between rebuilds in ZIP entry timestamps and the manifest implementation timestamp only. The verification boundary therefore pins the **source tree**, not a JAR byte hash. Contract: rebuild from this source snapshot, then confirm `228 tests / 0 failures / COMPLETION_SCAN_PASS`, packaged `mods.toml` version `1.0.7`, and a 0-duplicate / 0-`c2me`-entry archive. One verified build of this source produced 1,073,125 bytes with SHA-256 `149c20b21217bcc9e5363f45fd02325aa2ff09be69748ef20db05f2732b044e1`; the test JAR delivered for evaluation is 1,073,124 bytes with SHA-256 `0e7c21c44abfde224e5e7ccbf0c8920b30da95a0a53f441bdb669b90973066af`.
+- A ground-up optimization/correctness review of the predecessor candidate confirmed the two fixed defects above and explicitly rejected reopening the lighting snapshot, global save barrier, cache defaults, retired async chunk request, and global biome cache. An independent read-only re-verification of this exact successor candidate is recorded separately in the project evidence directory.
 - Allocation removals are structural (copies, queues, per-tick walks, maps). They are not a measured live-server RAM result.
-- The earlier 1.0.7 review packet predates the packaged-description correction and is stale for this successor; this source snapshot is not accepted or released.
 - Production deployment, restart, player-path validation, long-duration RAM testing, MSPT/chunk-generation measurement, and performance claims remain outside this candidate.
 
 ## [1.0.6] - 2026-09-13

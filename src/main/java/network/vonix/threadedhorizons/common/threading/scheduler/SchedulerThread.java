@@ -1,6 +1,7 @@
 package network.vonix.threadedhorizons.common.threading.scheduler;
 
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
 import network.vonix.threadedhorizons.common.config.ThreadedHorizonsConfig;
 import net.minecraft.world.level.ChunkPos;
 import org.jetbrains.annotations.NotNull;
@@ -34,6 +35,8 @@ public class SchedulerThread extends Thread implements Executor {
     public static SchedulerThread INSTANCE = new SchedulerThread();
 
     private static final ThreadLocal<int[]> NESTED_GENERATION = ThreadLocal.withInitial(() -> new int[1]);
+    /** Shared by ChunkPos-only callers (existing tests and the no-world overload). */
+    private static final Object DEFAULT_PIPELINE_WORLD = new Object();
 
     /** Bounded lock admissions per scheduler cycle so raw tasks cannot starve. */
     static final int LOCK_ADMISSION_BATCH = 32;
@@ -58,7 +61,13 @@ public class SchedulerThread extends Thread implements Executor {
     private final ReentrantLock lifecycleLock = new ReentrantLock();
     private final ReentrantLock pipelineLock = new ReentrantLock();
     private final Condition pipelineNotFull = this.pipelineLock.newCondition();
-    private final LongOpenHashSet pipelineChunks = new LongOpenHashSet();
+    /**
+     * Unique (world identity, packed ChunkPos) pairs currently occupying a
+     * pipeline slot. Nested maps keep occupancy dimension-aware without
+     * allocating a composite key on every admit/leave.
+     */
+    private final Reference2ObjectOpenHashMap<Object, Long2IntOpenHashMap> pipelineChunks = new Reference2ObjectOpenHashMap<>();
+    private int pipelineOccupancy;
     private final ArrayDeque<PipelineAdmission> pipelineWaiters = new ArrayDeque<>();
 
     private long lastRebuild = System.currentTimeMillis();
@@ -263,8 +272,10 @@ public class SchedulerThread extends Thread implements Executor {
 
     /**
      * Maximum unique chunks allowed in the threaded-worldgen pipeline at once.
-     * Scales with heap so {@code -Xmx2G} cannot retain a full spawn-wave of
-     * NoiseChunk/protochunk state, while still admitting several chunks per worker.
+     * A chunk is a {@code (world, ChunkPos)} pair: Overworld {@code (0,0)} and
+     * Nether {@code (0,0)} consume two slots. Scales with heap so {@code -Xmx2G}
+     * cannot retain a full spawn-wave of NoiseChunk/protochunk state, while still
+     * admitting several chunks per worker.
      */
     public static int computePipelineLimit(int parallelism, long maxMemoryBytes) {
         int workers = Math.max(1, parallelism);
@@ -293,7 +304,7 @@ public class SchedulerThread extends Thread implements Executor {
     public int getPipelineCount() {
         this.pipelineLock.lock();
         try {
-            return this.pipelineChunks.size();
+            return this.pipelineOccupancy;
         } finally {
             this.pipelineLock.unlock();
         }
@@ -319,26 +330,89 @@ public class SchedulerThread extends Thread implements Executor {
         }
     }
 
+    private static Object resolveWorldKey(Object worldKey) {
+        return worldKey == null ? DEFAULT_PIPELINE_WORLD : worldKey;
+    }
+
+    private boolean pipelineContains(Object worldKey, long packedPos) {
+        Long2IntOpenHashMap refs = this.pipelineChunks.get(worldKey);
+        return refs != null && refs.get(packedPos) > 0;
+    }
+
+    /**
+     * Inserts or retains a (world, pos) slot. Occupancy counts unique keys, not
+     * reentries. {@code retainOnReentry} is true only for callers that passed an
+     * explicit world identity: nested generation of the same chunk must not
+     * double-count, and the outermost leave (refcount reaching zero) releases
+     * the slot. ChunkPos-only callers stay occupancy-idempotent so one leave
+     * still releases after a no-op re-enter.
+     */
+    private boolean pipelineAdd(Object worldKey, long packedPos, boolean retainOnReentry) {
+        Long2IntOpenHashMap refs = this.pipelineChunks.get(worldKey);
+        if (refs == null) {
+            refs = new Long2IntOpenHashMap();
+            this.pipelineChunks.put(worldKey, refs);
+        }
+        int current = refs.get(packedPos);
+        if (current > 0) {
+            if (retainOnReentry) {
+                refs.put(packedPos, current + 1);
+            }
+            return false;
+        }
+        refs.put(packedPos, 1);
+        this.pipelineOccupancy++;
+        return true;
+    }
+
+    private boolean pipelineRemove(Object worldKey, long packedPos) {
+        Long2IntOpenHashMap refs = this.pipelineChunks.get(worldKey);
+        if (refs == null) {
+            return false;
+        }
+        int current = refs.get(packedPos);
+        if (current <= 0) {
+            return false;
+        }
+        if (current == 1) {
+            refs.remove(packedPos);
+            this.pipelineOccupancy--;
+            if (refs.isEmpty()) {
+                this.pipelineChunks.remove(worldKey);
+            }
+        } else {
+            refs.put(packedPos, current - 1);
+        }
+        return true;
+    }
+
     public void enterChunkPipeline(ChunkPos pos) throws InterruptedException {
+        enterChunkPipeline(null, pos);
+    }
+
+    public void enterChunkPipeline(Object worldKey, ChunkPos pos) throws InterruptedException {
         if (pos == null) {
             throw new NullPointerException("pos");
         }
         if (Thread.currentThread() == this) {
             throw new IllegalStateException("scheduler thread cannot block on worldgen admission");
         }
-        long key = pos.toLong();
+        boolean retainOnReentry = worldKey != null;
+        Object world = resolveWorldKey(worldKey);
+        long packed = pos.toLong();
         boolean nested = NESTED_GENERATION.get()[0] > 0;
         while (true) {
             this.pipelineLock.lock();
             try {
-                if (this.pipelineChunks.contains(key)) {
+                if (pipelineContains(world, packed)) {
+                    pipelineAdd(world, packed, retainOnReentry);
                     return;
                 }
                 if (this.stopping.get()) {
                     throw new IllegalStateException("scheduler is stopping");
                 }
-                if (nested || this.pipelineChunks.size() < this.pipelineLimit) {
-                    this.pipelineChunks.add(key);
+                if (nested || this.pipelineOccupancy < this.pipelineLimit) {
+                    pipelineAdd(world, packed, retainOnReentry);
                     return;
                 }
             } finally {
@@ -355,25 +429,31 @@ public class SchedulerThread extends Thread implements Executor {
      * is queued and completed when {@link #leaveChunkPipeline} frees capacity.
      */
     public CompletableFuture<Void> acquireChunkPipelineAsync(ChunkPos pos) {
+        return acquireChunkPipelineAsync(null, pos);
+    }
+
+    public CompletableFuture<Void> acquireChunkPipelineAsync(Object worldKey, ChunkPos pos) {
         if (pos == null) {
             throw new NullPointerException("pos");
         }
+        boolean retainOnReentry = worldKey != null;
+        Object world = resolveWorldKey(worldKey);
         this.pipelineLock.lock();
         try {
             if (this.stopping.get()) {
                 return CompletableFuture.failedFuture(new IllegalStateException("scheduler is stopping"));
             }
-            long key = pos.toLong();
-            if (this.pipelineChunks.contains(key)
+            long packed = pos.toLong();
+            if (pipelineContains(world, packed)
                     || NESTED_GENERATION.get()[0] > 0
-                    || this.pipelineChunks.size() < this.pipelineLimit) {
-                this.pipelineChunks.add(key);
+                    || this.pipelineOccupancy < this.pipelineLimit) {
+                pipelineAdd(world, packed, retainOnReentry);
                 return CompletableFuture.completedFuture(null);
             }
             if (this.pipelineWaiters.size() >= MAX_PIPELINE_WAITERS) {
                 return CompletableFuture.failedFuture(new IllegalStateException("pipeline waiter queue is full"));
             }
-            PipelineAdmission waiter = new PipelineAdmission(pos);
+            PipelineAdmission waiter = new PipelineAdmission(world, pos, retainOnReentry);
             this.pipelineWaiters.addLast(waiter);
             waiter.attachCancelCallback(this);
             return waiter.future;
@@ -383,12 +463,16 @@ public class SchedulerThread extends Thread implements Executor {
     }
 
     public void leaveChunkPipeline(ChunkPos pos) {
+        leaveChunkPipeline(null, pos);
+    }
+
+    public void leaveChunkPipeline(Object worldKey, ChunkPos pos) {
         List<PipelineAdmission> released = new ArrayList<>();
         boolean stopping;
         this.pipelineLock.lock();
         try {
             if (pos != null) {
-                this.pipelineChunks.remove(pos.toLong());
+                pipelineRemove(resolveWorldKey(worldKey), pos.toLong());
             }
             stopping = this.stopping.get();
             if (stopping) {
@@ -409,8 +493,6 @@ public class SchedulerThread extends Thread implements Executor {
 
     private void handleAdmissionCancellation(PipelineAdmission admission) {
         List<PipelineAdmission> successors = new ArrayList<>();
-        boolean releaseSlot = false;
-        long key = admission.pos.toLong();
         this.pipelineLock.lock();
         try {
             AdmissionState state = admission.state.get();
@@ -421,8 +503,7 @@ public class SchedulerThread extends Thread implements Executor {
             } else if (state == AdmissionState.ADMITTED) {
                 // Ownership never transferred because complete(null) failed on a cancelled future.
                 if (admission.state.compareAndSet(AdmissionState.ADMITTED, AdmissionState.RELEASED)) {
-                    this.pipelineChunks.remove(key);
-                    releaseSlot = true;
+                    pipelineRemove(admission.worldKey, admission.pos.toLong());
                     if (!this.stopping.get()) {
                         admitWaitersLocked(successors);
                     }
@@ -444,7 +525,7 @@ public class SchedulerThread extends Thread implements Executor {
         }
         this.pipelineLock.lock();
         try {
-            if (this.stopping.get() || this.pipelineChunks.size() < this.pipelineLimit) {
+            if (this.stopping.get() || this.pipelineOccupancy < this.pipelineLimit) {
                 return;
             }
             this.pipelineNotFull.await(50L, TimeUnit.MILLISECONDS);
@@ -507,14 +588,14 @@ public class SchedulerThread extends Thread implements Executor {
                 waiter.state.compareAndSet(AdmissionState.QUEUED, AdmissionState.RELEASED);
                 continue;
             }
-            long key = waiter.pos.toLong();
-            if (this.pipelineChunks.contains(key) || this.pipelineChunks.size() < this.pipelineLimit) {
+            long packed = waiter.pos.toLong();
+            if (pipelineContains(waiter.worldKey, packed) || this.pipelineOccupancy < this.pipelineLimit) {
                 this.pipelineWaiters.pollFirst();
                 if (!waiter.state.compareAndSet(AdmissionState.QUEUED, AdmissionState.ADMITTED)) {
                     // Lost a race with cancellation; do not keep the slot.
                     continue;
                 }
-                this.pipelineChunks.add(key);
+                pipelineAdd(waiter.worldKey, packed, waiter.retainOnReentry);
                 admitted.add(waiter);
             } else {
                 return;
@@ -551,7 +632,7 @@ public class SchedulerThread extends Thread implements Executor {
         this.pipelineLock.lock();
         try {
             if (admission.state.compareAndSet(AdmissionState.ADMITTED, AdmissionState.RELEASED)) {
-                this.pipelineChunks.remove(admission.pos.toLong());
+                pipelineRemove(admission.worldKey, admission.pos.toLong());
                 if (!this.stopping.get()) {
                     admitWaitersLocked(successors);
                 }
@@ -581,13 +662,17 @@ public class SchedulerThread extends Thread implements Executor {
     }
 
     private static final class PipelineAdmission {
+        private final Object worldKey;
         private final ChunkPos pos;
+        private final boolean retainOnReentry;
         private final CompletableFuture<Void> future = new CompletableFuture<>();
         private final AtomicReference<AdmissionState> state = new AtomicReference<>(AdmissionState.QUEUED);
         private volatile SchedulerThread owner;
 
-        private PipelineAdmission(ChunkPos pos) {
+        private PipelineAdmission(Object worldKey, ChunkPos pos, boolean retainOnReentry) {
+            this.worldKey = worldKey;
             this.pos = pos;
+            this.retainOnReentry = retainOnReentry;
         }
 
         private void attachCancelCallback(SchedulerThread scheduler) {
@@ -610,7 +695,7 @@ public class SchedulerThread extends Thread implements Executor {
             }
             pipelineLock.lock();
             try {
-                this.ready = stopping.get() || pipelineChunks.size() < pipelineLimit;
+                this.ready = stopping.get() || pipelineOccupancy < pipelineLimit;
                 return this.ready;
             } finally {
                 pipelineLock.unlock();
@@ -621,12 +706,12 @@ public class SchedulerThread extends Thread implements Executor {
         public boolean block() throws InterruptedException {
             pipelineLock.lock();
             try {
-                if (stopping.get() || pipelineChunks.size() < pipelineLimit) {
+                if (stopping.get() || pipelineOccupancy < pipelineLimit) {
                     this.ready = true;
                     return true;
                 }
                 pipelineNotFull.await(50L, TimeUnit.MILLISECONDS);
-                this.ready = stopping.get() || pipelineChunks.size() < pipelineLimit;
+                this.ready = stopping.get() || pipelineOccupancy < pipelineLimit;
                 return this.ready;
             } finally {
                 pipelineLock.unlock();

@@ -113,7 +113,7 @@ public abstract class MixinChunkStatus implements IChunkStatus {
             int lockRadius = ThreadedHorizonsConfig.threadedWorldGenConfig.reduceLockRadius && this.reducedTaskRadius != -1 ? this.reducedTaskRadius : this.range;
             //noinspection ConstantConditions
             completableFuture = ChunkStatusUtils.runChunkGenWithLock(targetChunk.getPos(), lockRadius, PriorityUtils.getChunkPriority(world, targetChunk), ((IWorldGenLockable) world).getWorldGenChunkLock(), () ->
-                    ChunkStatusUtils.getThreadingType(status).runTask(((IWorldGenLockable) world).getWorldGenSingleThreadedLock(), generationTask), status, holder)
+                    ChunkStatusUtils.getThreadingType(status).runTask(((IWorldGenLockable) world).getWorldGenSingleThreadedLock(), generationTask), status, holder, world)
                     .exceptionally(throwable -> {
                         Throwable actual = throwable;
                         while (actual instanceof CompletionException && actual.getCause() != null) {

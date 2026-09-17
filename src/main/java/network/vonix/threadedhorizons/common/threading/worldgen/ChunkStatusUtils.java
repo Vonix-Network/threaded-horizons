@@ -42,6 +42,10 @@ public class ChunkStatusUtils {
     }
 
     public static <T> CompletableFuture<T> runChunkGenWithLock(ChunkPos target, int radius, IntSupplier priority, AsyncNamedLock<ChunkPos> chunkLock, Supplier<CompletableFuture<T>> action, ChunkStatus status, ChunkHolder holder) {
+        return runChunkGenWithLock(target, radius, priority, chunkLock, action, status, holder, null);
+    }
+
+    public static <T> CompletableFuture<T> runChunkGenWithLock(ChunkPos target, int radius, IntSupplier priority, AsyncNamedLock<ChunkPos> chunkLock, Supplier<CompletableFuture<T>> action, ChunkStatus status, ChunkHolder holder, Object worldKey) {
         Preconditions.checkNotNull(priority);
         Preconditions.checkNotNull(target);
         final BooleanSupplier cancelled = holder == null || status == null
@@ -52,12 +56,12 @@ public class ChunkStatusUtils {
         }
         if (Thread.currentThread() == SchedulerThread.INSTANCE) {
             return CompletableFuture.supplyAsync(
-                    () -> runChunkGenWithLock(target, radius, priority, chunkLock, action, status, holder),
+                    () -> runChunkGenWithLock(target, radius, priority, chunkLock, action, status, holder, worldKey),
                     GlobalExecutors.executor
             ).thenCompose(Function.identity());
         }
 
-        final CompletableFuture<Void> admission = SchedulerThread.INSTANCE.acquireChunkPipelineAsync(target);
+        final CompletableFuture<Void> admission = SchedulerThread.INSTANCE.acquireChunkPipelineAsync(worldKey, target);
         final CompletableFuture<T> result = new CompletableFuture<>();
         // 0 unclaimed, 1 generation owns slot (startAdmittedChunkGen leaves), 2 cancelled before generation
         final AtomicInteger handoff = new AtomicInteger(0);
@@ -75,15 +79,15 @@ public class ChunkStatusUtils {
                 return;
             }
             if (!handoff.compareAndSet(0, 1)) {
-                SchedulerThread.INSTANCE.leaveChunkPipeline(target);
+                SchedulerThread.INSTANCE.leaveChunkPipeline(worldKey, target);
                 return;
             }
             if (result.isDone()) {
-                SchedulerThread.INSTANCE.leaveChunkPipeline(target);
+                SchedulerThread.INSTANCE.leaveChunkPipeline(worldKey, target);
                 return;
             }
             try {
-                startAdmittedChunkGen(target, radius, priority, chunkLock, action, cancelled)
+                startAdmittedChunkGen(worldKey, target, radius, priority, chunkLock, action, cancelled)
                         .whenComplete((value, generated) -> {
                             if (generated != null) {
                                 result.completeExceptionally(generated);
@@ -100,7 +104,7 @@ public class ChunkStatusUtils {
         return result;
     }
 
-    private static <T> CompletableFuture<T> startAdmittedChunkGen(ChunkPos target, int radius, IntSupplier priority, AsyncNamedLock<ChunkPos> chunkLock, Supplier<CompletableFuture<T>> action, BooleanSupplier cancelled) {
+    private static <T> CompletableFuture<T> startAdmittedChunkGen(Object worldKey, ChunkPos target, int radius, IntSupplier priority, AsyncNamedLock<ChunkPos> chunkLock, Supplier<CompletableFuture<T>> action, BooleanSupplier cancelled) {
         boolean releaseImmediately = false;
         try {
             if (SchedulerThread.INSTANCE.isStopping() || cancelled.getAsBoolean()) {
@@ -124,13 +128,13 @@ public class ChunkStatusUtils {
                 releaseImmediately = true;
                 return lock.getFuture();
             }
-            return lock.getFuture().whenComplete((result, throwable) -> SchedulerThread.INSTANCE.leaveChunkPipeline(target));
+            return lock.getFuture().whenComplete((result, throwable) -> SchedulerThread.INSTANCE.leaveChunkPipeline(worldKey, target));
         } catch (Throwable throwable) {
             releaseImmediately = true;
             return CompletableFuture.failedFuture(throwable);
         } finally {
             if (releaseImmediately) {
-                SchedulerThread.INSTANCE.leaveChunkPipeline(target);
+                SchedulerThread.INSTANCE.leaveChunkPipeline(worldKey, target);
             }
         }
     }
