@@ -17,6 +17,9 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -30,6 +33,49 @@ class VanillaRegionCycleTest {
 
     @TempDir
     Path root;
+
+    @Test
+    void concurrentDistinctChunkStoresRetainBlockEntityIdentity() throws Exception {
+        ExecutorService serialize = Executors.newFixedThreadPool(8);
+        Path directory = root.resolve("parallel");
+        ThreadedHorizonsStorageThread storage = new ThreadedHorizonsStorageThread(
+                new VanillaRegionBackend(directory, true), serialize, "parallel-identity");
+        List<CompletableFuture<Void>> writes = new ArrayList<>();
+        try {
+            for (int i = 0; i < 64; i++) {
+                ChunkPos position = new ChunkPos(i, i * 3);
+                CompoundTag chunk = new CompoundTag();
+                chunk.putInt("xPos", position.x);
+                chunk.putInt("zPos", position.z);
+                ListTag entities = new ListTag();
+                CompoundTag backpack = new CompoundTag();
+                backpack.putString("id", "test:backpack");
+                backpack.putInt("x", position.getMinBlockX());
+                backpack.putInt("z", position.getMinBlockZ());
+                backpack.putInt("color", i);
+                backpack.putString("contents", "owner-" + i);
+                entities.add(backpack);
+                chunk.put("block_entities", entities);
+                writes.add(storage.store(position.toLong(), chunk));
+            }
+            CompletableFuture.allOf(writes.toArray(CompletableFuture[]::new)).get(30, TimeUnit.SECONDS);
+            storage.flush(true).get(30, TimeUnit.SECONDS);
+        } finally {
+            storage.close().get(30, TimeUnit.SECONDS);
+            serialize.shutdownNow();
+        }
+        try (VanillaRegionBackend backend = new VanillaRegionBackend(directory, true)) {
+            for (int i = 0; i < 64; i++) {
+                ChunkPos position = new ChunkPos(i, i * 3);
+                CompoundTag saved = backend.read(position);
+                assertNotNull(saved);
+                CompoundTag backpack = saved.getList("block_entities", 10).getCompound(0);
+                assertEquals(i, backpack.getInt("color"));
+                assertEquals("owner-" + i, backpack.getString("contents"));
+                assertEquals(position.getMinBlockX(), backpack.getInt("x"));
+            }
+        }
+    }
 
     @Test
     void oneHundredSaveStopReopenCyclesAcrossThreeDimensions() throws Exception {

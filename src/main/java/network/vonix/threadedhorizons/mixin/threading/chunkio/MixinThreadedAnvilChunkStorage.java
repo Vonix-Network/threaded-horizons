@@ -282,7 +282,14 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
      * chests with intact playerdata on a restart.
      */
     private void joinSaveFutures() {
-        this.mainThreadExecutor.managedBlock(() -> this.saveTracker.joinFully(SAVE_BARRIER_TIMEOUT_MS));
+        final boolean[] confirmed = {false};
+        this.mainThreadExecutor.managedBlock(() -> {
+            confirmed[0] = this.saveTracker.joinFully(SAVE_BARRIER_TIMEOUT_MS);
+            return true;
+        });
+        if (!confirmed[0]) {
+            throw new IllegalStateException("Chunk save barrier did not drain");
+        }
     }
 
     /** Upper bound for the shutdown drain before the barrier reports failure. */

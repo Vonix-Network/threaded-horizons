@@ -1,8 +1,5 @@
 package network.vonix.threadedhorizons.common.threading.chunkio;
 
-import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
-import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
@@ -55,8 +52,6 @@ public class AsyncSerializationManager {
         public final ChunkPos pos;
         public final Map<LightLayer, LayerLightEventListener> lighting;
         public final Set<BlockPos> blockEntityPositions;
-        public final Map<BlockPos, BlockEntity> blockEntities;
-        public final Map<BlockPos, CompoundTag> pendingBlockEntityNbtsPacked;
         private final AtomicBoolean isOpen = new AtomicBoolean(false);
 
         public Scope(ChunkAccess chunk, ServerLevel world) {
@@ -68,32 +63,6 @@ public class AsyncSerializationManager {
             }
             this.lighting = lightingViews;
             this.blockEntityPositions = new HashSet<>(chunk.getBlockEntitiesPos());
-            Map<BlockPos, BlockEntity> entities = new Object2ObjectOpenHashMap<>();
-            for (BlockPos blockPos : this.blockEntityPositions) {
-                BlockEntity blockEntity = chunk.getBlockEntity(blockPos);
-                if (blockEntity != null && !blockEntity.isRemoved()) {
-                    entities.put(blockEntity.getBlockPos(), blockEntity);
-                }
-            }
-            this.blockEntities = entities;
-            Map<BlockPos, CompoundTag> pendingBlockEntitiesNbtPacked = new Object2ObjectOpenHashMap<>();
-            for (BlockPos blockPos : this.blockEntityPositions) {
-                final CompoundTag blockEntityNbt = chunk.getBlockEntityNbt(blockPos);
-                if (blockEntityNbt == null) continue;
-                final CompoundTag copy = blockEntityNbt.copy();
-                copy.putBoolean("keepPacked", true);
-                pendingBlockEntitiesNbtPacked.put(blockPos, copy);
-            }
-            this.pendingBlockEntityNbtsPacked = pendingBlockEntitiesNbtPacked;
-            int packedOnly = 0;
-            for (BlockPos blockPos : this.pendingBlockEntityNbtsPacked.keySet()) {
-                if (!this.blockEntities.containsKey(blockPos)) {
-                    packedOnly++;
-                }
-            }
-            if (this.blockEntityPositions.size() != this.blockEntities.size() + packedOnly) {
-                LOGGER.warn("Block entities size mismatch! expected {} but got {}", this.blockEntityPositions.size(), this.blockEntities.size() + packedOnly);
-            }
         }
 
         public void open() {
