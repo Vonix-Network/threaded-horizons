@@ -264,10 +264,27 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
     @Override
     public void flushWorker() {
         joinSaveFutures();
+        // RegionFileStorage/IOWorker may still hold buffered bytes after TH's own
+        // tracker reports idle. Drain the storage side, then re-confirm the tracker
+        // so a follow-on store scheduled by a completion callback cannot slip past
+        // the barrier.
         super.flushWorker();
+        joinSaveFutures();
     }
 
+    /**
+     * Durable wait for all in-flight chunk stores.
+     *
+     * <p>Uses the tracker's quiet-window barrier rather than a single zero-read.
+     * A single read can observe a momentary gap between a completing store and
+     * the follow-on store it schedules, report "idle", and let the process exit
+     * with region bytes still buffered — the exact path that produced empty
+     * chests with intact playerdata on a restart.
+     */
     private void joinSaveFutures() {
-        this.mainThreadExecutor.managedBlock(this.saveTracker::isIdle);
+        this.mainThreadExecutor.managedBlock(() -> this.saveTracker.joinFully(SAVE_BARRIER_TIMEOUT_MS));
     }
+
+    /** Upper bound for the shutdown drain before the barrier reports failure. */
+    private static final long SAVE_BARRIER_TIMEOUT_MS = 120_000L;
 }

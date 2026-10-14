@@ -1,6 +1,22 @@
 # Release checklist
 
-This checklist records the evidence boundary for the public `1.0.0` release and the later 1.0.7 replacement candidate. It is not a promise of production safety or universal compatibility.
+This checklist records the evidence boundary for the public `1.0.0` release, the later 1.0.7 replacement candidate, and the 1.1.0 durability repair. It is not a promise of production safety or universal compatibility.
+
+## 1.1.0 durability repair
+
+- [x] Java 17 clean `./gradlew --no-daemon clean test build` passed from the repository source tree for 1.1.0.
+- [x] 1.1.0 artifact path is `build/libs/threaded-horizons-mc1.18.2-1.1.0.jar`.
+- [x] 1.1.0 artifact is 1,073,836 bytes with SHA-256 `55766ca556755ab6960df41bbf36c5be9c89350a91959c28d9c98a7ad3b36b5b`; packaged `mods.toml` version is `1.1.0`; 792 entries, 0 duplicate entries, 0 `c2me` entries.
+- [x] Gate: 237 tests, 0 failures, 0 errors, 0 skipped (79 suites); `COMPLETION_SCAN_PASS`.
+- [x] Durability opt-out removed and proven absent in shipped bytecode: `MixinRegionBasedStorage.onPostInit` compiles to an unconditional `iconst_1` store into `sync`, with no `getProperty`, `parseBoolean`, or `getenv` present.
+- [x] Barrier strengthened: `joinSaveFutures()` uses `SaveFutureTracker.joinFully(timeoutMs)` (quiet-window drain, fail-closed on timeout); `flushWorker()` drains storage then re-confirms.
+- [x] Regression gates added: `SaveFutureBarrierDurabilityTest`, `RegionDurabilityNoOptOutTest`, and two new `OwnedExecutorLifecycleContractTest` gates.
+- [ ] Independent read-only review is required for the exact 1.1.0 artifact before publication.
+- [ ] Packaged-JAR disposable dedicated-server boot reaching `Done` with the durability mixin confirmed applied.
+- [ ] Runtime acceptance: clean stop with containers populated, then reopen and read back container NBT to prove durability end-to-end.
+- [ ] Publication read-back: release page and asset must match the final artifact.
+
+## Historical — 1.0.0 release and 1.0.7 candidate
 
 - [x] Java 17 clean `./gradlew --no-daemon clean test build` passed from the repository source tree for the 1.0.0 release.
 - [x] Artifact path for 1.0.0 was `build/libs/threaded-horizons-mc1.18.2-1.0.0.jar`.

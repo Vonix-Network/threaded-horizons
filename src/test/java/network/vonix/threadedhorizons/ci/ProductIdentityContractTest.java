@@ -47,9 +47,9 @@ class ProductIdentityContractTest {
     }
 
     @Test
-    void gradleIdentityIs107AndForge401312() throws Exception {
+    void gradleIdentityIs111AndForge401312() throws Exception {
         String props = Files.readString(Path.of("gradle.properties"));
-        assertTrue(props.contains("mod_version=1.0.7"));
+        assertTrue(props.contains("mod_version=1.1.1"));
         assertTrue(props.contains("forge_version=40.3.12"));
         assertTrue(props.contains("minecraft_version=1.18.2"));
     }

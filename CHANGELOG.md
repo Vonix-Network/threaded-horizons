@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.1.0] - 2026-10-13
+
+Durability repair. Closes a restart data-loss defect that could empty player containers while leaving player data current. This is a behaviour fix, not an optimisation claim.
+
+### Fixed
+
+- **Region-file writes can no longer be made non-durable.** `MixinRegionBasedStorage` previously honoured the system property `network.vonix.threadedhorizons.chunkio.syncDiskWrites` and set `RegionFileStorage.sync` to the requested value. With `sync = false`, `RegionFileStorage` buffers writes in a queue that `SaveFutureTracker` cannot see, so `ChunkMap.flushWorker()` joined only TH-owned stores, observed "idle", and returned control to vanilla with region bytes still in memory. The constructor argument is now ignored and `sync` is forced `true` unconditionally — there is no property, environment, or config route to disable it, and the built class contains no conditional for it.
+- **The shutdown save barrier is now a durable drain instead of a single sample.** `SaveFutureTracker.isIdle()` is a single `get() == 0` read. It can observe the gap between a completing store and the follow-on store that completion schedules (via `DirtyChunkGenerations.applyStoreOutcome` on `whenComplete`), and report "idle" with work still outstanding. `joinSaveFutures()` now calls `SaveFutureTracker.joinFully(timeoutMs)`, which requires the in-flight count to reach zero **and remain zero across a quiet window** before confirming. On timeout it returns `false` and logs an error rather than claiming durability.
+- **`flushWorker()` drains storage, then re-confirms.** Order is now: join TH's in-flight stores → `super.flushWorker()` (drain `IOWorker`/`RegionFileStorage`) → join again, so a store scheduled by a completion callback during the drain cannot slip past the barrier.
+
+### Observed failure this repairs
+
+On a live Forge 1.18.2 server the stop sequence emitted `All chunks are saved`, then `Stopping server`, then a **second** `All chunks are saved` ~2.5 s later, and 68 region files were written with an identical mtime during process exit. Any hard stop before that drain lost the buffered writes; on reload the affected chunks came from an older complete copy, so **chests reverted to an earlier block-entity state while `playerdata` (a separate, non-buffered path) stayed current** — empty chests, intact inventory, no death. `playerdata` and region files are different stores, so the symptom split is expected, not contradictory.
+
+### Added
+
+- `SaveFutureBarrierDurabilityTest` — 4 gates including a completion-scheduled follow-on chain (the exact shape a single sample misses), timeout-must-not-claim-durability, and prompt return when already idle.
+- `RegionDurabilityNoOptOutTest` — 3 structural gates failing if the opt-out is reintroduced by system property, environment, config, or the caller-supplied argument, and asserting the correction mixin stays registered.
+- `OwnedExecutorLifecycleContractTest` — 2 new gates asserting the barrier uses `joinFully` and that `flushWorker` drains then re-confirms.
+
+### Intentionally unchanged
+
+- All performance behaviour is unchanged. Chunk saving remains asynchronous; no server-thread blocking was added to the save path. The only added waiting is at the existing unload/flush barriers, where the quieter, stronger drain replaces a weaker one.
+- `optimizeAsyncChunkRequest` remains retired, `useGlobalBiomeCache` remains false, the ModernFix warmup guard and Lithium-family skip remain, and the IO worker cache defaults are unchanged.
+
+### Verification boundary
+
+- Fresh Java 17 command: `./gradlew clean test build --no-daemon`. **237 tests, 0 failures, 0 errors, 0 skipped (79 suites)**; `COMPLETION_SCAN_PASS`.
+- Shipped artifact: `threaded-horizons-mc1.18.2-1.1.0.jar`, 1,073,836 bytes, SHA-256 `55766ca556755ab6960df41bbf36c5be9c89350a91959c28d9c98a7ad3b36b5b`; 792 entries, 0 duplicate entries, 0 `c2me` entries; packaged `mods.toml` version `1.1.0`.
+- Bytecode inspection of the shipped class confirms `onPostInit` compiles to an unconditional `iconst_1` store into the `sync` field, with no `getProperty`, `parseBoolean`, or `getenv` call present.
+- Runtime acceptance on a live server (clean stop with containers populated, then reopen and read back container NBT) has **not** been run. Deployment, restart, and player-path validation remain outside this candidate.
+
 ## [1.0.7] - 2026-09-14
 
 RAM and allocation-churn successor for the controlled Forge 1.18.2 candidate, plus two ground-up review repairs. This version is test-only and does not claim production readiness, universal compatibility, measured RAM reduction, or performance improvement.

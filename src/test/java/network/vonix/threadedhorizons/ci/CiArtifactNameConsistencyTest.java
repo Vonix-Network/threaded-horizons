@@ -82,7 +82,7 @@ class CiArtifactNameConsistencyTest {
 
         // Current known product identity for this candidate lane.
         assertFalse(ver.equals("0.1.0-alpha.1"), "mod_version must not remain on retired alpha.1");
-        assertEquals("1.0.7", ver, "candidate version is 1.0.7");
+        assertEquals("1.1.1", ver, "candidate version is 1.1.1");
         assertTrue(mc.equals("1.18.2"), "candidate lane is Forge 1.18.2");
         assertTrue(base.equals("threaded-horizons"), "archives_base_name");
         assertEquals("40.3.12", require(props, "forge_version"));
