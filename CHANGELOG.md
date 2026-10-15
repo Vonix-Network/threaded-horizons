@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.1] - 2026-10-14
+
+Block-entity serialization and save-barrier successor. This entry records the current test attempt; it is not production or CurseForge release authorization.
+
+### Verification / test attempt
+
+- Candidate source: `144cc0796e28f98f7d59e1ce2aa8c687fe88fb77` (`Remove unsafe block entity snapshot binding and harden save barrier`).
+- Fresh Java 17 command: `./gradlew clean test build --no-daemon` — **244 tests, 0 failures, 0 errors, 0 skipped (81 suites)**; `COMPLETION_SCAN_PASS`.
+- Fresh rerun: `./gradlew test --no-daemon --rerun-tasks` — **244 tests, 0 failures, 0 errors, 0 skipped**; `COMPLETION_SCAN_PASS`.
+- Built artifact: `threaded-horizons-mc1.18.2-1.1.1.jar`, 1,072,202 bytes, SHA-256 `48b3df2d9cf29c2e7c1a4a229fe51228adf3e68f89e7fdb4e8f9e870f1fdd195`. The exact same hash was installed into the disposable runtime before boot.
+- Headless Forge 1.18.2 / 40.3.12 full IoB modpack test on clean world `th-auto-111`: startup reached `Done`; Threaded Horizons storage and chunk-storage mixins applied. Three chest block entities were populated across same and different chunks, saved with `save-all flush`, cleanly stopped, restarted, and read back with exact item IDs/counts and positions. **PASS.**
+- The owner could not join during this attempt. No Sophisticated Backpacks open/close/relog player-path test was run; the previously reported backpack/player corruption is therefore **not cleared** by this headless storage result. Production acceptance and CurseForge publication remain blocked pending that player-path test or an equivalent independent client harness.
+
 ## [1.1.0] - 2026-10-13
 
 Durability repair. Closes a restart data-loss defect that could empty player containers while leaving player data current. This is a behaviour fix, not an optimisation claim.
