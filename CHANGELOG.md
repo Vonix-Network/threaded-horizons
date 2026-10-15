@@ -7,11 +7,12 @@ Block-entity serialization and save-barrier successor. This entry records the cu
 ### Verification / test attempt
 
 - Candidate source: `144cc0796e28f98f7d59e1ce2aa8c687fe88fb77` (`Remove unsafe block entity snapshot binding and harden save barrier`).
-- Fresh Java 17 command: `./gradlew clean test build --no-daemon` — **244 tests, 0 failures, 0 errors, 0 skipped (81 suites)**; `COMPLETION_SCAN_PASS`.
-- Fresh rerun: `./gradlew test --no-daemon --rerun-tasks` — **244 tests, 0 failures, 0 errors, 0 skipped**; `COMPLETION_SCAN_PASS`.
-- Built artifact: `threaded-horizons-mc1.18.2-1.1.1.jar`, 1,072,202 bytes, SHA-256 `48b3df2d9cf29c2e7c1a4a229fe51228adf3e68f89e7fdb4e8f9e870f1fdd195`. The exact same hash was installed into the disposable runtime before boot.
-- Headless Forge 1.18.2 / 40.3.12 full IoB modpack test on clean world `th-auto-111`: startup reached `Done`; Threaded Horizons storage and chunk-storage mixins applied. Three chest block entities were populated across same and different chunks, saved with `save-all flush`, cleanly stopped, restarted, and read back with exact item IDs/counts and positions. **PASS.**
-- The owner could not join during this attempt. No Sophisticated Backpacks open/close/relog player-path test was run; the previously reported backpack/player corruption is therefore **not cleared** by this headless storage result. Production acceptance and CurseForge publication remain blocked pending that player-path test or an equivalent independent client harness.
+- Fresh Java 17 command: `./gradlew clean test build --no-daemon` — **244 tests, 0 failures, 0 errors, 0 skipped (81 suites)**; `COMPLETION_SCAN_PASS`; `BUILD SUCCESSFUL`.
+- Fresh rerun: `./gradlew test --no-daemon --rerun-tasks` — **244 tests, 0 failures, 0 errors, 0 skipped**; `COMPLETION_SCAN_PASS`; `BUILD SUCCESSFUL`.
+- Fresh clean-build artifact: `threaded-horizons-mc1.18.2-1.1.1.jar`, 1,072,202 bytes, SHA-256 `cdf36e456da1eb1605b16abbdf4a45ad75f6c288ced90560c2c4aebac912f9e5`.
+- Earlier headless Forge 1.18.2 / 40.3.12 full IoB runtime probe on clean world `th-auto-111` used the same source candidate and the then-built artifact hash `48b3df2d9cf29c2e7c1a4a229fe51228adf3e68f89e7fdb4e8f9e870f1fdd195`. The exact runtime bytes were confirmed identical to that installed JAR. Startup reached `Done`; Threaded Horizons storage/chunk-storage mixins applied; after clean stop/restart, `data get block` read back three distinct chest inventories at `(0,64,0)`, `(1,64,0)`, and `(32,64,0)` with the intended item IDs/counts. **Narrow chest persistence probe: PASS.** The `save-all flush` submission itself has no captured completion line; shutdown did log all dimensions saved.
+- A repeat attempt using the fresh clean-build hash was blocked before gameplay by an unrelated full-pack startup failure in `vonix_server_utilities` (`ArrayIndexOutOfBoundsException` in `VsuPlatformEvents.register`); no claim is made for that artifact's runtime boot.
+- The owner could not join during this attempt. No Sophisticated Backpacks open/close/relog player-path test was run; the previously reported backpack/player corruption is therefore **not cleared** by the headless chest result. Production acceptance and CurseForge publication remain blocked pending that player-path test or an equivalent independent client harness.
 
 ## [1.1.0] - 2026-10-13
 
