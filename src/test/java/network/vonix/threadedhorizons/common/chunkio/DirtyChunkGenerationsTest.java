@@ -112,11 +112,17 @@ public class DirtyChunkGenerationsTest {
     void successfulSaveClearsOnlyWhenGenerationIsStillCurrent() {
         Object chunk = new Object();
         AtomicBoolean unsaved = new AtomicBoolean(true);
+        int before = DirtyChunkGenerations.generationEntryCount();
         long generation = DirtyChunkGenerations.markMutated(chunk);
         assertTrue(DirtyChunkGenerations.applyStoreOutcome(chunk, generation, true, unsaved));
         assertFalse(unsaved.get());
-        assertEquals(0L, DirtyChunkGenerations.current(chunk));
+        assertEquals(generation, DirtyChunkGenerations.current(chunk),
+                "a durable save keeps the generation so a later mutation cannot reuse it");
+        assertEquals(before + 1, DirtyChunkGenerations.generationEntryCount(),
+                "success must not drop the weak entry; forget or GC does");
         DirtyChunkGenerations.forget(chunk);
+        assertEquals(0L, DirtyChunkGenerations.current(chunk));
+        assertEquals(before, DirtyChunkGenerations.generationEntryCount());
     }
 
     @Test
@@ -160,6 +166,11 @@ public class DirtyChunkGenerationsTest {
         AtomicBoolean unsaved = new AtomicBoolean(true);
         assertTrue(DirtyChunkGenerations.applyStoreOutcome(chunk, mutation, true, unsaved));
         assertFalse(unsaved.get());
+        assertEquals(mutation, DirtyChunkGenerations.current(chunk),
+                "holder success must not reset the chunk generation to 0");
+        assertEquals(before, DirtyChunkGenerations.generationEntryCount(),
+                "per-chunk holder storage must not insert a WeakHashMap stripe entry");
+        DirtyChunkGenerations.forget(chunk);
         assertEquals(0L, DirtyChunkGenerations.current(chunk));
         DirtyChunkGenerationsTest.assertMutationBetweenValidationAndClearSurvivesHolder();
     }

@@ -10,8 +10,10 @@ import java.util.function.BooleanSupplier;
 
 /**
  * Per-chunk mutation generations. Only mutations advance the counter.
- * A save captures the current generation; an older completion must not
- * clear unsaved state or forget a newer overlapping mutation.
+ * A save captures the current generation and does not advance it. A durable
+ * completion leaves that number in place, so a later mutation cannot reuse it.
+ * An older completion must not clear unsaved state for a newer mutation.
+ * {@link #forget(Object)} is the only path that returns a live key to 0.
  */
 public final class DirtyChunkGenerations {
 
@@ -132,7 +134,7 @@ public final class DirtyChunkGenerations {
         }
     }
 
-    private static boolean transitionAfterSave(
+    static boolean transitionAfterSave(
             Object chunk,
             long saveGeneration,
             boolean durableSuccess,
@@ -154,7 +156,13 @@ public final class DirtyChunkGenerations {
                 if (clearUnsaved != null) {
                     clearUnsaved.run();
                 }
-                forgetUnlocked(chunk);
+                // clearUnsaved can re-enter markMutated on this same lock
+                // (setUnsaved(true) from a nested editor). Do not report the
+                // captured generation cleared, and do not reset it, if that
+                // nested mutation advanced the counter.
+                if (currentUnlockedObject(chunk) != saveGeneration) {
+                    return false;
+                }
                 return true;
             }
             if (!durableSuccess && isUnsaved != null && markUnsaved != null && !isUnsaved.getAsBoolean()) {
@@ -176,14 +184,6 @@ public final class DirtyChunkGenerations {
             return holder.currentDirtyGeneration();
         }
         return currentUnlocked(chunk);
-    }
-
-    private static void forgetUnlocked(Object chunk) {
-        if (chunk instanceof DirtyGenerationHolder holder) {
-            holder.forgetDirtyGeneration();
-            return;
-        }
-        generationsFor(chunk).remove(chunk);
     }
 
     private static long currentUnlocked(Object chunk) {

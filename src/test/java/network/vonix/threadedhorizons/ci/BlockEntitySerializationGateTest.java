@@ -25,6 +25,6 @@ class BlockEntitySerializationGateTest {
         String save = Files.readString(Path.of("src/main/java/network/vonix/threadedhorizons/mixin/threading/chunkio/MixinThreadedAnvilChunkStorage.java"));
         assertTrue(save.contains("confirmed[0] = this.saveTracker.joinFully"));
         assertTrue(save.contains("if (!confirmed[0])"));
-        assertTrue(save.contains("throw new IllegalStateException(\"Chunk save barrier did not drain\")"));
+        assertTrue(save.contains("throw new ChunkSaveBarrierException(\"Chunk save barrier did not drain\")"));
     }
 }

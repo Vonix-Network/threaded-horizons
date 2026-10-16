@@ -20,6 +20,12 @@ class AutosaveProfileDirtyGenerationTest {
             "network.vonix.threadedhorizons.mixin.threading.chunkio.MixinWorldChunkDirtyGenerations";
     private static final String ASYNC_SAVE =
             "network.vonix.threadedhorizons.mixin.threading.chunkio.MixinThreadedAnvilChunkStorage";
+    private static final String STRUCTURE_GENERATION =
+            "network.vonix.threadedhorizons.mixin.threading.chunkio.MixinChunkAccessStructureGenerations";
+    private static final String SAVE_CONTINUATION =
+            "network.vonix.threadedhorizons.mixin.threading.chunkio.MixinServerLevelSaveContinuation";
+    private static final String SAVE_REPORT =
+            "network.vonix.threadedhorizons.mixin.threading.chunkio.MixinMinecraftServerSaveReport";
     private static final String ENHANCED_CHUNK =
             "network.vonix.threadedhorizons.mixin.optimization.chunkscheduling.idle_tasks.autosave.enhanced_autosave.MixinChunk";
     private static final String ENHANCED_WORLD_CHUNK =
@@ -35,6 +41,15 @@ class AutosaveProfileDirtyGenerationTest {
             assertTrue(plugin.evaluate(LEVEL_CHUNK, MUTATION_WORLD_CHUNK, true, mode), mode + " world-chunk mutation mixin");
             assertTrue(plugin.evaluate("net.minecraft.server.level.ChunkMap", ASYNC_SAVE, true, mode),
                     mode + " async save overwrite");
+            assertTrue(plugin.evaluate(CHUNK_ACCESS, STRUCTURE_GENERATION, true, mode), mode + " structure generation");
+            assertFalse(plugin.evaluate(CHUNK_ACCESS, STRUCTURE_GENERATION, false, mode), mode + " structure generation async-off");
+            assertTrue(plugin.evaluate("net.minecraft.server.level.ServerLevel", SAVE_CONTINUATION, true, mode),
+                    mode + " save continuation");
+            assertFalse(plugin.evaluate("net.minecraft.server.level.ServerLevel", SAVE_CONTINUATION, false, mode),
+                    mode + " save continuation async-off");
+            assertTrue(plugin.evaluate("net.minecraft.server.MinecraftServer", SAVE_REPORT, true, mode), mode + " save report");
+            assertFalse(plugin.evaluate("net.minecraft.server.MinecraftServer", SAVE_REPORT, false, mode),
+                    mode + " save report async-off");
             assertFalse(plugin.evaluate(CHUNK_ACCESS, MUTATION_CHUNK, false, mode), mode + " async-off chunk mixin");
             assertFalse(plugin.evaluate(LEVEL_CHUNK, MUTATION_WORLD_CHUNK, false, mode), mode + " async-off world-chunk mixin");
             assertEquals(mode == Mode.ENHANCED, plugin.evaluate(CHUNK_ACCESS, ENHANCED_CHUNK, true, mode), mode + " enhanced chunk");

@@ -2,7 +2,11 @@ package network.vonix.threadedhorizons.mixin.threading.chunkio;
 
 import com.ibm.asyncutil.locks.AsyncNamedLock;
 import network.vonix.threadedhorizons.common.GlobalExecutors;
+import network.vonix.threadedhorizons.common.chunkio.ChunkSaveAdmission;
+import network.vonix.threadedhorizons.common.chunkio.ChunkSaveBarrierException;
 import network.vonix.threadedhorizons.common.chunkio.DirtyChunkGenerations;
+import network.vonix.threadedhorizons.common.chunkio.FailedChunkSaves;
+import network.vonix.threadedhorizons.common.chunkio.SaveBarrier;
 import network.vonix.threadedhorizons.common.chunkio.SaveFutureTracker;
 import network.vonix.threadedhorizons.common.chunkio.ThreadedHorizonsStorageVanillaInterface;
 import network.vonix.threadedhorizons.common.threading.chunkio.ChunkIoMainThreadTaskUtils;
@@ -38,6 +42,7 @@ import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -46,6 +51,7 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -100,6 +106,9 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
 
     private Set<ChunkPos> scheduledChunks = new HashSet<>();
     private final SaveFutureTracker saveTracker = new SaveFutureTracker();
+    /** Failures belong to this chunk map. Another dimension must not drain them. */
+    @Unique
+    private final FailedChunkSaves threadedHorizons$failedSaves = new FailedChunkSaves();
     private static final int MAX_SAVE_FUTURES = SaveFutureTracker.MAX_SAVE_FUTURES;
 
     /**
@@ -189,6 +198,9 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
     /**
      * @author vonix
      * @reason Keep dirty generations until the store future is durable. Unload uses this remappable save path.
+     *         A generation that already has a store in flight is not admitted again: vanilla
+     *         {@code saveAllChunks(true)} repeats {@code save} until it returns false, and a second
+     *         true result used to enqueue a duplicate future until the cap rejected a later chunk.
      */
     @Overwrite
     private boolean save(ChunkAccess chunk) {
@@ -199,6 +211,8 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
         long generation = DirtyChunkGenerations.captureForSave(chunk);
         ChunkPos chunkPos = chunk.getPos();
         boolean profilerPushed = false;
+        boolean admitted = false;
+        boolean handedToCallback = false;
         try {
             ChunkStatus chunkStatus = chunk.getStatus();
             if (chunkStatus.getChunkType() != ChunkStatus.ChunkType.LEVELCHUNK) {
@@ -209,6 +223,12 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
                     return false;
                 }
             }
+            if (!ChunkSaveAdmission.begin(chunk, generation)) {
+                // The existing future still clears unsaved only if this generation is current
+                // when it completes. flushWorker/processUnloads join that future.
+                return false;
+            }
+            admitted = true;
             this.level.getProfiler().push("chunkSave");
             profilerPushed = true;
             AsyncSerializationManager.Scope serializationScope = new AsyncSerializationManager.Scope(chunk, this.level);
@@ -220,7 +240,7 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
             } finally {
                 AsyncSerializationManager.pop(serializationScope);
             }
-            if (!this.saveTracker.tryReserve()) {
+            if (!this.reserveSaveSlot()) {
                 throw new IllegalStateException("chunk save future queue is full");
             }
             CompletableFuture<Void> stored;
@@ -232,13 +252,43 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
                 this.saveTracker.release();
                 throw storeFailure;
             }
-            this.saveTracker.attach(stored);
+            // Dependents of one future run last-registered first. A sibling
+            // whenComplete can therefore release the tracker slot before the
+            // failure is recorded. The gate completes only after the outcome,
+            // and attach waits on the gate, so inFlight stays nonzero until then.
+            CompletableFuture<Void> releaseGate = new CompletableFuture<>();
             stored.whenComplete((unused, throwable) -> {
-                DirtyChunkGenerations.applyStoreOutcome(chunk, generation, throwable);
-                if (throwable != null) {
-                    LOGGER.error("Failed to store chunk {},{}", chunkPos.x, chunkPos.z, throwable);
+                try {
+                    if (throwable != null) {
+                        this.threadedHorizons$failedSaves.record(chunk);
+                    }
+                    DirtyChunkGenerations.applyStoreOutcome(chunk, generation, throwable);
+                    if (throwable == null && !chunk.isUnsaved()) {
+                        this.threadedHorizons$failedSaves.clear(chunk);
+                    }
+                    if (throwable != null) {
+                        LOGGER.error("Failed to store chunk {},{}", chunkPos.x, chunkPos.z, throwable);
+                    }
+                } finally {
+                    try {
+                        ChunkSaveAdmission.end(chunk, generation);
+                    } finally {
+                        if (throwable != null) {
+                            releaseGate.completeExceptionally(throwable);
+                        } else {
+                            releaseGate.complete(null);
+                        }
+                    }
                 }
             });
+            this.saveTracker.attach(releaseGate);
+            handedToCallback = true;
+            if (stored.isCompletedExceptionally()) {
+                // An already-failed future must not return true. saveAllChunks(true)
+                // repeats save while any call returns true, and a persistent inline
+                // failure would spin that loop on the server thread.
+                return false;
+            }
             // The storage write is deliberately asynchronous. Blocking the server thread here
             // deadlocks shutdown and can prevent vanilla from reaching its save barrier. The
             // completion callback keeps the chunk dirty until the exact generation is durable;
@@ -246,6 +296,12 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
             this.markPosition(chunkPos, chunkStatus.getChunkType());
             return true;
         } catch (Exception exception) {
+            if (admitted && !handedToCallback) {
+                ChunkSaveAdmission.end(chunk, generation);
+            }
+            if (admitted) {
+                this.threadedHorizons$failedSaves.record(chunk);
+            }
             DirtyChunkGenerations.applyStoreOutcome(chunk, generation, exception);
             LOGGER.error("Failed to save chunk {},{}", chunkPos.x, chunkPos.z, exception);
             return false;
@@ -256,20 +312,93 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
         }
     }
 
+    /**
+     * Take one tracker slot. If other chunks already hold the cap, wait until
+     * one of their stores finishes instead of returning {@code false}: vanilla
+     * treats {@code false} as "this chunk needs no save" and stops the flush loop.
+     */
+    private boolean reserveSaveSlot() {
+        if (this.saveTracker.tryReserve()) {
+            return true;
+        }
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SAVE_BARRIER_TIMEOUT_MS);
+        while (!this.saveTracker.tryReserve()) {
+            long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+            if (remainingMs <= 0L || !this.saveTracker.awaitRoom(remainingMs)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Retry chunks whose store was attempted and failed. Runs on the caller
+     * thread and does not enter {@code managedBlock}. A full future cap does
+     * not call {@code save} (that wait can park for the barrier budget); the
+     * chunk stays pending and the return value tells the caller to join work
+     * that is already in flight.
+     *
+     * @return true when a retry was queued or some other store still holds a slot
+     */
+    private boolean scheduleFailedChunkRetries() {
+        boolean scheduled = false;
+        for (Object pending : this.threadedHorizons$failedSaves.drain()) {
+            if (!(pending instanceof ChunkAccess chunk) || !chunk.isUnsaved()) {
+                continue;
+            }
+            long generation = DirtyChunkGenerations.captureForSave(chunk);
+            if (ChunkSaveAdmission.isAdmitted(chunk, generation)) {
+                this.threadedHorizons$failedSaves.record(chunk);
+                scheduled = true;
+                continue;
+            }
+            if (this.saveTracker.inFlight() >= SaveFutureTracker.MAX_SAVE_FUTURES) {
+                this.threadedHorizons$failedSaves.record(chunk);
+                scheduled = true;
+                continue;
+            }
+            boolean queued = this.save(chunk);
+            if (chunk.isUnsaved()) {
+                this.threadedHorizons$failedSaves.record(chunk);
+            }
+            if (queued || ChunkSaveAdmission.isAdmitted(chunk, DirtyChunkGenerations.captureForSave(chunk))) {
+                scheduled = true;
+            }
+        }
+        return scheduled;
+    }
+
     @Inject(method = "processUnloads", at = @At("RETURN"))
     private void awaitUnloadedStores(BooleanSupplier keepGoing, CallbackInfo info) {
         joinSaveFutures();
+        // One retry per tick. A persistent disk error stays pending for the
+        // next tick and for flushWorker; it does not hold this tick for the
+        // full barrier budget.
+        if (this.scheduleFailedChunkRetries()) {
+            joinSaveFutures();
+        }
     }
 
     @Override
     public void flushWorker() {
         joinSaveFutures();
-        // RegionFileStorage/IOWorker may still hold buffered bytes after TH's own
-        // tracker reports idle. Drain the storage side, then re-confirm the tracker
-        // so a follow-on store scheduled by a completion callback cannot slip past
-        // the barrier.
-        super.flushWorker();
+        // One budget for both region fences and the retry between them.
+        // ChunkStorage.flushWorker is worker.synchronize(true).join(). An
+        // exceptionally completed flush makes join throw CompletionException,
+        // which ServerLevel's continuation does not catch. awaitStorageFence
+        // is that same synchronize(true) wait, bounded, and typed.
+        // RegionFile.write does not force; synchronize(true) does.
+        long deadline = SaveBarrier.deadlineAfter(SAVE_BARRIER_TIMEOUT_MS);
+        SaveBarrier.awaitStorageFence(this.worker.synchronize(true), deadline);
         joinSaveFutures();
+        // Retry runs on this thread, outside managedBlock, and drains only this
+        // chunk map's failures. The second fence waits only for the time left.
+        SaveBarrier.awaitQuietAndRetryUntil(
+                this.saveTracker,
+                deadline,
+                this.threadedHorizons$failedSaves::hasPending,
+                this::scheduleFailedChunkRetries);
+        SaveBarrier.awaitStorageFence(this.worker.synchronize(true), deadline);
     }
 
     /**
@@ -288,7 +417,7 @@ public abstract class MixinThreadedAnvilChunkStorage extends ChunkStorage implem
             return true;
         });
         if (!confirmed[0]) {
-            throw new IllegalStateException("Chunk save barrier did not drain");
+            throw new ChunkSaveBarrierException("Chunk save barrier did not drain");
         }
     }
 

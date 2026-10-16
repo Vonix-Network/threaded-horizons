@@ -98,7 +98,8 @@ class SaveFutureTrackerTest {
         stored.complete(null);
         assertTrue(tracker.isIdle());
         assertFalse(unsaved.get(), "durable success of the current generation may clear unsaved");
-        assertEquals(0L, DirtyChunkGenerations.current(chunk));
+        assertEquals(generation, DirtyChunkGenerations.current(chunk),
+                "durable success must not recycle the generation");
         DirtyChunkGenerations.forget(chunk);
     }
 
@@ -141,6 +142,64 @@ class SaveFutureTrackerTest {
         for (CompletableFuture<Void> future : held) {
             future.complete(null);
         }
+        assertTrue(tracker.isIdle());
+    }
+
+    @Test
+    void oneCompletionReleasesOnceEvenIfAnEarlierCallbackThrows() {
+        SaveFutureTracker tracker = new SaveFutureTracker();
+        assertTrue(tracker.tryReserve());
+        CompletableFuture<Void> stored = new CompletableFuture<>();
+        stored.whenComplete((unused, throwable) -> {
+            throw new IllegalStateException("sibling callback");
+        });
+        tracker.attach(stored);
+        stored.complete(null);
+        stored.complete(null);
+        assertEquals(0, tracker.inFlight(), "one reservation is released once");
+    }
+
+    @Test
+    void awaitRoomReturnsFalseWhenTheWaiterIsInterrupted() throws Exception {
+        SaveFutureTracker tracker = new SaveFutureTracker();
+        for (int index = 0; index < SaveFutureTracker.MAX_SAVE_FUTURES; index++) {
+            assertTrue(tracker.tryReserve());
+        }
+        boolean[] room = {true};
+        boolean[] interrupted = {false};
+        Thread waiter = new Thread(() -> {
+            room[0] = tracker.awaitRoom(30_000L);
+            interrupted[0] = Thread.currentThread().isInterrupted();
+        }, "await-room-interrupt");
+        waiter.start();
+        Thread.sleep(30L);
+        waiter.interrupt();
+        waiter.join(2_000L);
+        assertFalse(waiter.isAlive(), "awaitRoom must return after interruption");
+        assertFalse(room[0]);
+        assertTrue(interrupted[0], "the interrupt status must stay set");
+    }
+
+    @Test
+    void joinFullyReturnsFalseWhenTheWaiterIsInterrupted() throws Exception {
+        SaveFutureTracker tracker = new SaveFutureTracker();
+        assertTrue(tracker.tryReserve());
+        CompletableFuture<Void> blocked = new CompletableFuture<>();
+        tracker.attach(blocked);
+        boolean[] drained = {true};
+        boolean[] interrupted = {false};
+        Thread waiter = new Thread(() -> {
+            drained[0] = tracker.joinFully(30_000L);
+            interrupted[0] = Thread.currentThread().isInterrupted();
+        }, "join-fully-interrupt");
+        waiter.start();
+        Thread.sleep(30L);
+        waiter.interrupt();
+        waiter.join(2_000L);
+        assertFalse(waiter.isAlive(), "joinFully must return after interruption");
+        assertFalse(drained[0]);
+        assertTrue(interrupted[0], "the interrupt status must stay set");
+        blocked.complete(null);
         assertTrue(tracker.isIdle());
     }
 }

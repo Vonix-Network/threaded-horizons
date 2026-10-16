@@ -58,6 +58,31 @@ public final class SaveFutureTracker {
     }
 
     /**
+     * Wait until one admission slot is free. Callers that already found
+     * {@link #tryReserve()} false use this so a dirty chunk is not reported
+     * as saved while the cap is held by other stores. Returns false on timeout
+     * or when the waiter is interrupted. The interrupt status is left set.
+     */
+    public boolean awaitRoom(long timeoutMs) {
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, timeoutMs));
+        while (System.nanoTime() < deadline) {
+            if (Thread.interrupted()) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+            if (this.inFlight.get() < MAX_SAVE_FUTURES) {
+                return true;
+            }
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1L));
+        }
+        if (Thread.interrupted()) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        return this.inFlight.get() < MAX_SAVE_FUTURES;
+    }
+
+    /**
      * Bind a reserved slot to {@code stored}. The reservation is released
      * exactly once when the future completes (success or failure), including
      * the already-completed case.
@@ -85,13 +110,18 @@ public final class SaveFutureTracker {
      * @param timeoutMs hard upper bound; on expiry the caller is told the
      *                  barrier did <em>not</em> confirm and must treat the
      *                  world as possibly-not-durable.
-     * @return {@code true} when the tracker confirmed idle.
+     * @return {@code true} when the tracker confirmed idle. {@code false} on
+     *         timeout or interruption. Interruption leaves the interrupt status set.
      */
     public boolean joinFully(long timeoutMs) {
         final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, timeoutMs));
         int consecutiveZero = 0;
         int lastObserved = -1;
         while (System.nanoTime() < deadline) {
+            if (Thread.interrupted()) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
             final int current = this.inFlight.get();
             if (current == 0) {
                 if (++consecutiveZero >= QUIET_CONFIRMATIONS) {
@@ -106,6 +136,10 @@ public final class SaveFutureTracker {
             }
             Thread.onSpinWait();
             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1L));
+        }
+        if (Thread.interrupted()) {
+            Thread.currentThread().interrupt();
+            return false;
         }
         LOGGER.error("Save-future barrier did not confirm idle within {}ms ({} still in flight); "
                 + "world data may not be durable", timeoutMs, this.inFlight.get());

@@ -57,8 +57,10 @@ class OwnedExecutorLifecycleContractTest {
     }
 
     /**
-     * {@code flushWorker} must drain the storage side and then re-confirm the
+     * {@code flushWorker} must fence region storage, then re-confirm the
      * tracker, because a completion callback can schedule further stores.
+     * The first fence is bounded {@code awaitStorageFence(synchronize(true))}.
+     * {@code super.flushWorker()} is an unbounded {@code join} and must not return.
      */
     @Test
     void flushWorkerDrainsStorageThenReconfirmsTheTracker() throws Exception {
@@ -68,11 +70,18 @@ class OwnedExecutorLifecycleContractTest {
         assertTrue(flushWorker > 0, "flushWorker must exist");
         String body = storage.substring(flushWorker, storage.indexOf("\n    }", flushWorker));
         int firstJoin = body.indexOf("joinSaveFutures()");
-        int superFlush = body.indexOf("super.flushWorker()");
+        int firstFence = body.indexOf("SaveBarrier.awaitStorageFence");
         int secondJoin = body.indexOf("joinSaveFutures()", firstJoin + 1);
+        int barrier = body.indexOf("awaitQuietAndRetryUntil");
+        int secondFence = body.indexOf("SaveBarrier.awaitStorageFence", firstFence + "SaveBarrier.awaitStorageFence".length());
+        int fence = body.indexOf("synchronize(true)", secondFence);
         assertTrue(firstJoin >= 0, body);
-        assertTrue(superFlush > firstJoin, "storage drain must follow the first join: " + body);
-        assertTrue(secondJoin > superFlush,
-                "tracker must be re-confirmed after the storage drain: " + body);
+        assertTrue(!body.contains("super.flushWorker()"),
+                "flushWorker must not call the unbounded ChunkStorage join: " + body);
+        assertTrue(firstFence > firstJoin, "the first bounded fence must follow the first join: " + body);
+        assertTrue(secondJoin > firstFence,
+                "tracker must be re-confirmed after the first storage fence: " + body);
+        assertTrue(barrier > secondJoin && secondFence > barrier && fence > secondFence,
+                "a retry can queue a store after the first flush; synchronize(true) must follow the barrier: " + body);
     }
 }
